@@ -79,7 +79,7 @@ class ExecutionOutcome:
     output_paths: tuple[str, ...] = ()
     model: str | None = None
     aspect: str | None = None
-    duration: int | None = None
+    duration: float | None = None
     error_type: str | None = None
     error_detail: str | None = None
     charged: ChargedState = "no"

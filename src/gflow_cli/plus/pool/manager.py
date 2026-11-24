@@ -20,6 +20,7 @@ from gflow_cli.plus.config import PlusSettings, get_plus_settings
 from gflow_cli.plus.pool.executor import (
     check_existing_output,
     execute_via_worker,
+    ledger_duration,
     validate_payload,
 )
 from gflow_cli.plus.pool.models import AttemptRecord, ExecutionOutcome, JobKind, JobStatus, PoolJob
@@ -458,14 +459,13 @@ def _count_statuses(jobs: Sequence[PoolJob]) -> dict[str, int]:
 
 
 def _skipped_ledger(payload: dict[str, Any], profile: str, existing: Path) -> dict[str, Any]:
-    raw_duration = payload.get("duration")
     return ExecutionOutcome(
         status="succeeded",
         profile=profile,
         output_paths=(str(existing),),
         model=str(payload.get("model") or "") or None,
         aspect=str(payload.get("aspect") or "") or None,
-        duration=raw_duration if isinstance(raw_duration, int) else None,
+        duration=ledger_duration((str(existing),), payload.get("duration")),
         skipped_existing=True,
     ).ledger_dict()
 

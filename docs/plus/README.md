@@ -31,7 +31,7 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | `gflow_plus_submit_image` | 提交一张图（有 `ref_paths` 为 i2i，否则 t2i），默认 `9:16`、`nano2` | 图片 0 积分 |
 | `gflow_plus_submit_video` | 提交一条视频（t2v / i2v / r2v，按输入自动判断），默认 `9:16`、`omni-1.2-flash`；`max_credits` 设上限 | 是 |
 | `gflow_plus_submit_batch` | 一次提交多条：每项 `{"kind": "image"\|"video", "prompt": ..., 以及上面两个工具的参数}` | 视内容 |
-| `gflow_plus_wait_jobs` | 等任务完成，最多 35 秒一次；返回状态计数和每条的结果（`output_paths`、`media_id`、账号）或错误 | 否 |
+| `gflow_plus_wait_jobs` | 等任务完成，最多 35 秒一次；返回状态计数和每条的结果（`output_paths`、`media_id`、账号、`duration`）或错误。视频的 `duration` 读自生成的 MP4 文件本身，是实际秒数 | 否 |
 | `gflow_plus_job_status` | 单个任务、整批或最近任务的完整记录（含每次尝试） | 否 |
 | `gflow_plus_cancel_job` | 取消还在排队的任务；已经在跑的停不下来 | 否 |
 | `gflow_plus_hide_taskbar` | 立即隐藏一次任务栏里的 gflow Chrome | 否 |

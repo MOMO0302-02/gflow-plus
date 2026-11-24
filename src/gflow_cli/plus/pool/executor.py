@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import struct
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,54 @@ from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueTask
 
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def mp4_duration_s(path: Path) -> float | None:
+    """Seconds from an MP4's ``moov/mvhd`` header, or None when the file has none.
+
+    gflow cannot know a clip's length when none was requested (Flow keeps the last
+    one picked), and PyAV is only an optional extra, so the ledger reads the file.
+    """
+    with path.open("rb") as f:
+        while len(header := f.read(8)) == 8:
+            size, kind = struct.unpack(">I4s", header)
+            if size == 1:
+                size = struct.unpack(">Q", f.read(8))[0] - 8
+            if size == 0:
+                body_len = None
+            elif size < 8:
+                return None
+            else:
+                body_len = size - 8
+            if kind == b"moov":
+                return _mvhd_seconds(f.read() if body_len is None else f.read(body_len))
+            if body_len is None:
+                return None
+            f.seek(body_len, os.SEEK_CUR)
+    return None
+
+
+def _mvhd_seconds(moov: bytes) -> float | None:
+    at = moov.find(b"mvhd")
+    if at < 4:
+        return None
+    fields = at + 8  # past the box type, version and flags
+    if moov[at + 4] == 1:
+        timescale, duration = struct.unpack_from(">IQ", moov, fields + 16)
+    else:
+        timescale, duration = struct.unpack_from(">II", moov, fields + 8)
+    return round(duration / timescale, 2) if timescale else None
+
+
+def ledger_duration(output_paths: Sequence[str], requested: object) -> float | None:
+    """The delivered clip's real length, else the length that was asked for."""
+    for raw in output_paths:
+        path = Path(raw)
+        if path.suffix.lower() == ".mp4" and path.is_file():
+            seconds = mp4_duration_s(path)
+            if seconds is not None:
+                return seconds
+    return float(requested) if isinstance(requested, int) else None
 
 
 def check_existing_output(payload: dict[str, Any]) -> Path | None:
@@ -120,7 +170,7 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
     model = str(payload.get("model") or "") or None
     aspect = str(payload.get("aspect") or "") or None
     raw_duration = payload.get("duration")
-    duration = int(raw_duration) if isinstance(raw_duration, int) else None
+    duration = float(raw_duration) if isinstance(raw_duration, int) else None
 
     if task.status == "completed":
         paths = _resolve_output_paths(task, db_path=db_path)
@@ -131,7 +181,7 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
             output_paths=paths,
             model=model,
             aspect=aspect,
-            duration=duration,
+            duration=ledger_duration(paths, raw_duration),
             charged="no",
         )
 
