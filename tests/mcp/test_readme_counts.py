@@ -25,6 +25,8 @@ def test_published_mcp_tool_count_matches_the_server(
     match = re.search(pattern, (_ROOT / page).read_text(encoding="utf-8"))
     assert match, f"{page} must state the MCP tool count ({pattern})"
     registered = len(mcp_server._tool_manager._tools)  # pyright: ignore[reportPrivateUsage]
+    # Fork-only gflow_plus_* tools are documented in docs/plus/README.md, not on these pages.
+    registered -= sum(1 for n in mcp_server._tool_manager._tools if n.startswith("gflow_plus_"))
     assert int(match.group(1)) == registered, (
         f"{page} says {match.group(1)} MCP tools; the server registers {registered}"
     )

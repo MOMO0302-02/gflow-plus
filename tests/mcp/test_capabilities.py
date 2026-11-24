@@ -113,6 +113,12 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "update": None,
     "video upscale": None,
     "video assemble": None,
+    "plus health": "credits.balance",
+    "plus pool status": None,
+    "plus pool pick": None,
+    "plus pool jobs": None,
+    "plus run-batch": _IMAGE,
+    "plus hide-taskbar": None,
 }
 
 

@@ -153,7 +153,13 @@ def _configure_utf8_pipes() -> None:
 # Credit-spending tools gated by --no-spend (#496). BOTH generate tools:
 # image generation is only *empirically* free ("~0 credits observed") and
 # no-spend must be a hard guarantee, so anything not contractually free is in.
-_SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
+_SPEND_TOOLS = (
+    "gflow_generate_image",
+    "gflow_generate_video",
+    "gflow_plus_submit_image",
+    "gflow_plus_submit_video",
+    "gflow_plus_submit_batch",
+)
 
 
 #: How long a tool call waits for a profile another process holds (#862). A human at the
@@ -229,6 +235,7 @@ def _register_surfaces() -> None:
     from gflow_cli.mcp import resources as _resources
     from gflow_cli.mcp import tools as _tools
     from gflow_cli.mcp import video_captions_tools as _video_captions_tools
+    from gflow_cli.plus import mcp_plus as _mcp_plus
 
     # Access them to satisfy pyright unused import check
     _ = (
@@ -239,6 +246,7 @@ def _register_surfaces() -> None:
         _resources,
         _tools,
         _video_captions_tools,
+        _mcp_plus,
     )
     _apply_no_spend_policy()
 

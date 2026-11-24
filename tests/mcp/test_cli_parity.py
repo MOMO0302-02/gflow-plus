@@ -92,6 +92,12 @@ CLI_TO_MCP: dict[str, str] = {
     "instructions toggle-mode": "gflow_instructions_toggle_mode",
     "media trash": "gflow_media_trash",
     "media restore": "gflow_media_restore",
+    "plus health": "gflow_plus_health",
+    "plus pool status": "gflow_plus_pool_status",
+    "plus pool pick": "gflow_plus_pool_status",
+    "plus pool jobs": "gflow_plus_job_status",
+    "plus run-batch": "gflow_plus_submit_batch",
+    "plus hide-taskbar": "gflow_plus_hide_taskbar",
 }
 
 # CLI leaf → reason it deliberately has NO MCP surface. "not yet ported"
@@ -320,6 +326,13 @@ _OPTION_EXEMPT: dict[str, str] = {
     "character create:model": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:format_prompt": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:locale": "GAP #691 — prompt-generated create not ported over MCP",
+    "plus pool pick:kind": (
+        "gflow_plus_pool_status already returns both recommended_image_profile and "
+        "recommended_video_profile"
+    ),
+    "plus run-batch:manifest": (
+        "reads a local JSON manifest file; MCP takes the items list directly"
+    ),
 }
 
 

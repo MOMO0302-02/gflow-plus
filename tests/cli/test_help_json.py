@@ -250,17 +250,20 @@ def test_every_leaf_has_a_spends_credits_decision() -> None:
 
 def test_tree_snapshot() -> None:
     tree = _tree("--help", "--json")
-    assert {" ".join(c["path"]): c["spends_credits"] for c in tree["commands"]} == EXPECTED_TREE
+    # Fork-only `gflow plus` commands are snapshotted in tests/plus/test_cli_docs.py.
+    commands = [c for c in tree["commands"] if c["path"][0] != "plus"]
+    assert {" ".join(c["path"]): c["spends_credits"] for c in commands} == EXPECTED_TREE
 
 
 def test_every_command_appears_in_the_cli_reference() -> None:
     # docs/USAGE.md is the command reference. Other pages mention commands in passing,
-    # which is not documentation, so they do not count.
+    # which is not documentation, so they do not count. Fork-only `gflow plus` commands
+    # are documented in docs/plus/README.md (tests/plus/test_cli_docs.py).
     text = (REPO / "docs" / "USAGE.md").read_text(encoding="utf-8")
     missing = [
         "gflow " + " ".join(p)
         for p, _, _ in cli_leaves(main)
-        if not re.search(re.escape("gflow " + " ".join(p)) + r"(?![\w-])", text)
+        if p[0] != "plus" and not re.search(re.escape("gflow " + " ".join(p)) + r"(?![\w-])", text)
     ]
     assert not missing, f"Commands not documented in docs/USAGE.md: {missing}"
 
