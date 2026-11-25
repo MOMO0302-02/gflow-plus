@@ -80,15 +80,22 @@ uv pip install --python D:\Infra\apps\gflow-cli\.venv-plus\Scripts\python.exe --
 装完验收：`gflow --version` 显示新版本，`gflow plus health` 三个账号都正常，再请用户打开开关，
 并通过 magpie 调一次 `gflow-plus__gflow_plus_pool_status`。
 
-**10. 更新 magpie 同步给其他电脑的版本。** 同步命令里写死了标签，要换成新标签：
+**10. 更新 magpie 同步给其他电脑的版本。** 同步命令里写死了标签，要换成新标签。先备份
+`C:\Users\MOMO\.config\magpie\library.json`，然后分三条命令执行，每条单独运行：
 
 ```powershell
-magpie library mcp show gflow-plus   # 先看当前配置
+magpie library mcp rm gflow-plus
+magpie library mcp add gflow-plus agents=claude,codex,opencode "env=GFLOW_CLI_HOME=D:\Infra\apps\gflow-cli\home" "env=GFLOW_CLI_OUTPUT_DIR=D:\cnshopper" "env=PLAYWRIGHT_BROWSERS_PATH=D:\Infra\apps\gflow-cli\browsers" timeout=300 -- uvx --from git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z gflow mcp run
+magpie library mcp here gflow-plus -- D:\Infra\apps\gflow-cli\.venv-plus\Scripts\gflow.exe mcp run
 ```
 
-用 `magpie library mcp add gflow-plus ... -- uvx --from git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z gflow mcp run`
-按原有的 agents、env、timeout 重新写入（同名覆盖），再用 `magpie library mcp show` 读回确认。
-本机的 `magpie library mcp here` 覆盖保持不变。
+读回 `library.json` 里的 `gflow-plus` 条目确认：`command` 是本机 `.venv-plus\Scripts\gflow.exe`，
+`agents` 是 claude、codex、opencode 三个，`shared.args` 里是新标签。
+
+- 同名 `add` 不会覆盖已有条目，所以要先 `rm`。
+- `here` 紧跟在 `add` 后面执行时曾经没生效，也没有任何输出；单独再执行一次才写进去。
+- 在 magpie 界面里把开关关掉再打开，曾经丢掉 `shared` 部分和 claude、codex 两个 agent（实测
+  2026-11-25）。重装期间关过开关的，打开后一定按上面重新写一遍并读回确认。
 
 **11. 汇报。** 版本号、Release 链接、本机验收结果、magpie 同步的标签，以及没做成的步骤。
 
