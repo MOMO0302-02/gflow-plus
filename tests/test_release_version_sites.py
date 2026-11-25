@@ -33,7 +33,7 @@ _SKILL = _ROOT / "skills" / "release" / "SKILL.md"
 _CUSTOM_READERS: dict[str, re.Pattern[str]] = {
     "docker/Dockerfile": re.compile(r"^ARG\s+GFLOW_VERSION=(?P<v>.+?)\s*$", re.MULTILINE),
     "src/gflow_cli/__init__.py": re.compile(r'^__version__\s*=\s*"(?P<v>[^"]+)"', re.MULTILINE),
-    "uv.lock": re.compile(r'^name = "gflow-cli"\r?\nversion = "(?P<v>[^"]+)"', re.MULTILINE),
+    "uv.lock": re.compile(r'^name = "gflow-plus"\r?\nversion = "(?P<v>[^"]+)"', re.MULTILINE),
     "pyproject.toml": re.compile(r'^version\s*=\s*"(?P<v>[^"]+)"', re.MULTILINE),
 }
 
@@ -51,7 +51,7 @@ def _table_sites() -> list[str]:
     """
     text = _SKILL.read_text(encoding="utf-8")
     start = text.index("**6. Bump the shared release version")
-    end = text.index("`server.json` is the one that bites quietly", start)
+    end = text.index("<!-- end-version-sites -->", start)
     sites: list[str] = []
     for row in text[start:end].splitlines():
         if not row.startswith("|"):

@@ -26,4 +26,4 @@ def test_imports_succeed() -> None:
     import gflow_cli.api.client  # noqa
     import gflow_cli.api.dto  # noqa
 
-    assert gflow_cli.__version__ == _pkg_version("gflow-cli")
+    assert gflow_cli.__version__ == _pkg_version("gflow-plus")

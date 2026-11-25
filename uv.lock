@@ -868,8 +868,8 @@ wheels = [
 ]
 
 [[package]]
-name = "gflow-cli"
-version = "0.106.0"
+name = "gflow-plus"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },

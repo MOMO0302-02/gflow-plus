@@ -84,7 +84,7 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Installe
     dist = tmp_path_factory.mktemp("captions-dist")
     env_dir = tmp_path_factory.mktemp("captions-venv")
     subprocess.run(["uv", "build", "--wheel", "-o", str(dist)], cwd=root, check=True, timeout=600)
-    wheel = next(dist.glob("gflow_cli-*.whl"))
+    wheel = next(dist.glob("gflow_plus-*.whl"))
     subprocess.run(
         ["uv", "venv", str(env_dir), "--python", sys.executable], check=True, timeout=600
     )

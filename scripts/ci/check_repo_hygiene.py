@@ -258,10 +258,10 @@ def _check_version_agreement() -> list[str]:
         # The editable package's own [[package]] block: `name` then `version`.
         # Anchored on the name so the ~200 dependency versions can't match.
         lock_match = re.search(
-            r'^name = "gflow-cli"\r?\nversion = "([^"]+)"', lock_text, re.MULTILINE
+            r'^name = "gflow-plus"\r?\nversion = "([^"]+)"', lock_text, re.MULTILINE
         )
         if lock_match is None:
-            return ['uv.lock: no [[package]] block for "gflow-cli" found']
+            return ['uv.lock: no [[package]] block for "gflow-plus" found']
         versions["uv.lock"] = lock_match.group(1)
         # Optional: a fork that does not publish to the MCP Registry has no server.json.
         # When it is present it declares the version twice, and both must agree.

@@ -1,13 +1,28 @@
 # Changelog
 
-All notable changes to `gflow-cli` will be documented in this file.
+All notable changes to `gflow-plus` will be documented in this file. Versions up to 0.106.0 are the upstream [gflow-cli](https://github.com/ffroliva/gflow-cli) releases.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
+## [1.0.0] - 2026-11-25
+
+gflow-plus becomes an independently maintained fork of gflow-cli. It no longer merges upstream changes, installs from GitHub only, and keeps every gflow-cli 0.106.0 feature plus the upstream changes listed under this version.
+
+### gflow-plus
+
+- **Multi-account pool** (`src/gflow_cli/plus/`): `gflow plus health | pool status | pool pick | pool jobs | run-batch | hide-taskbar` and the MCP tools `gflow_plus_health`, `gflow_plus_pool_status`, `gflow_plus_submit_image`, `gflow_plus_submit_video`, `gflow_plus_submit_batch`, `gflow_plus_job_status`, `gflow_plus_wait_jobs`, `gflow_plus_cancel_job` and `gflow_plus_hide_taskbar`. Jobs are picked onto an idle profile with enough credits, one job per profile at a time, return a `job_id` at once, and fail over to another profile only when the failure was not charged. Rate-limit, WAF and expired-session profiles cool down automatically.
+- **Taskbar hiding touches only Chrome/Chromium windows.** Off-screen Electron windows (they share `Chrome_WidgetWin_1`) and minimized windows are left alone.
+- **The package is `gflow-plus`, version 1.0.0.** The command is still `gflow` (new alias `gflow-plus`; the `gflow-cli` alias is gone). Install from `git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z`.
+
+### Removed
+
+- **`gflow update` and the PyPI update notice** (with `GFLOW_CLI_UPDATE_CHECK`). Both pointed at the upstream `gflow-cli` on PyPI, which would replace this fork. A missing optional extra now names the GitHub install command instead of a PyPI one.
+- **Upstream release automation**: the PyPI release, MCP Registry, Pages, Scorecard, Dependabot, sponsor and governance workflows, `server.json`, `CODEOWNERS` and `FUNDING.yml`. CI keeps the code checks and runs on `plus/main`; the SonarCloud job is removed.
+
+### Changed (upstream, merged before the fork)
 
 - **An MCP tool call that fails comes back with `isError: true` ([#1453](https://github.com/ffroliva/gflow-cli/issues/1453)).** Every tool returns its envelope as a plain dict, so the SDK reported every failure as a successful result (`isError: false`); only a `wait=false` job's result on `tasks/get` set the flag. The server now sets `isError: true` on a plain `tools/call` whose envelope has `status: "error"`, including envelopes built outside the shared error funnel (the confirmation-required envelope of `gflow_media_trash`, a refused argument). `structuredContent` is unchanged, so a client that reads only the envelope sees no difference; a client that branches on `isError` now sees the failure. Other statuses (`pending`, `rate_limited`, `failed`, ...) keep `isError: false`.
 
@@ -7399,7 +7414,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.106.0...HEAD
+[Unreleased]: https://github.com/MOMO0302-02/gflow-plus/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/MOMO0302-02/gflow-plus/releases/tag/v1.0.0
 [0.106.0]: https://github.com/ffroliva/gflow-cli/compare/v0.105.1...v0.106.0
 [0.105.1]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...v0.105.1
 [0.105.0]: https://github.com/ffroliva/gflow-cli/compare/v0.104.0...v0.105.0

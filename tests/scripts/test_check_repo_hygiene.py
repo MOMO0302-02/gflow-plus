@@ -124,7 +124,7 @@ def _version_tree(tmp_path, pyproject: str, init: str, plugin: str, lock: str | 
         'version = "8.9.9"\n'
         "\n"
         "[[package]]\n"
-        'name = "gflow-cli"\n'
+        'name = "gflow-plus"\n'
         f'version = "{pyproject if lock is None else lock}"\n'
         'source = { editable = "." }\n',
         encoding="utf-8",
@@ -156,7 +156,7 @@ def test_version_agreement_fails_when_only_uv_lock_drifts(tmp_path, monkeypatch)
 
 
 def test_version_agreement_ignores_other_packages_in_uv_lock(tmp_path, monkeypatch) -> None:
-    """The gate must anchor on gflow-cli, not the first `version =` it sees."""
+    """The gate must anchor on gflow-plus, not the first `version =` it sees."""
     root = _version_tree(tmp_path, "1.2.3", "1.2.3", "1.2.3")
     assert '"8.9.9"' in (root / "uv.lock").read_text(encoding="utf-8")
     monkeypatch.setattr(hygiene, "ROOT", root)

@@ -36,16 +36,16 @@
 
 ```powershell
 uv venv D:\Infra\apps\gflow-cli\.venv-plus --python 3.12
-uv pip install --python D:\Infra\apps\gflow-cli\.venv-plus\Scripts\python.exe "gflow-cli @ git+https://github.com/MOMO0302-02/gflow-plus@plus-0.106.0-1"
+uv pip install --python D:\Infra\apps\gflow-cli\.venv-plus\Scripts\python.exe "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
-把 `plus-0.106.0-1` 换成 [版本列表](https://github.com/MOMO0302-02/gflow-plus/releases) 里的最新版本号。也可以不建环境，直接用 uvx 运行：
+把 `v1.0.0` 换成 [版本列表](https://github.com/MOMO0302-02/gflow-plus/releases) 里的最新版本号。也可以不建环境，直接用 uvx 运行：
 
 ```powershell
-uvx --from git+https://github.com/MOMO0302-02/gflow-plus@plus-0.106.0-1 gflow --version
+uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow --version
 ```
 
-> 不要用 `pip install gflow-cli` 或 `gflow update` 升级，那样装上的是 PyPI 上的官方版，plus 功能会被覆盖掉。
+> 不要用 `pip install gflow-cli` 安装或升级：PyPI 上的 `gflow-cli` 是原项目，会把本版本覆盖掉。本版本也没有 `gflow update` 命令。
 
 ## 首次设置
 
@@ -122,7 +122,7 @@ gflow plus health                                      # 检查所有账号（�
 - `plus/main`：主分支，仓库首页显示的就是它。
 - 每个版本都会打标签并发布在 [版本列表](https://github.com/MOMO0302-02/gflow-plus/releases) 里。
 
-升级时重新执行安装命令，换成新的版本号，在 `uv pip install` 后面加上 `--reinstall-package gflow-cli`。升级前先确认没有任务在跑（`gflow plus pool status` 显示 0 个进行中的任务）。
+升级时重新执行安装命令，换成新的版本号，在 `uv pip install` 后面加上 `--reinstall-package gflow-plus`。升级前先确认没有任务在跑（`gflow plus pool status` 显示 0 个进行中的任务）。
 
 ## 许可
 

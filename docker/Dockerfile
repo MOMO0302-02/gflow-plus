@@ -15,7 +15,6 @@
 FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    GFLOW_CLI_UPDATE_CHECK=false \
     GFLOW_CLI_HOME=/data/gflow
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -45,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Deliberately NOT pinned: google-chrome-stable. Chrome's apt repo keeps only the current
 # build, so a pinned version stops resolving within weeks. The trade-off is that this
 # layer caches indefinitely and a rebuild is what picks up a newer Chrome.
-ARG GFLOW_VERSION=0.106.0
+ARG GFLOW_VERSION=1.0.0
 RUN pip install --no-cache-dir "gflow-cli==${GFLOW_VERSION}"
 
 VOLUME ["/data"]

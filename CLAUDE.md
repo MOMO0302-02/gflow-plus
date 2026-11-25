@@ -4,7 +4,7 @@
 
 ## What this project is
 
-`gflow-cli` is a Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) (Veo image-to-video, Imagen text-to-image) from the terminal by reverse-engineering Flow's private REST API. See [README.md](README.md) for the user-facing overview.
+`gflow-plus` is an independently maintained fork of gflow-cli (from v0.106.0, no upstream merges): a Python CLI and MCP server that drives [Google Flow](https://labs.google/fx/tools/flow) from the terminal, plus multi-account scheduling in `src/gflow_cli/plus/`. See [.github/README.md](.github/README.md) for the user-facing overview (Chinese) and [AGENTS.md](AGENTS.md) for how this repo is maintained.
 
 ## System rules — loaded, not requested
 

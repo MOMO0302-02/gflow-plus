@@ -1300,7 +1300,7 @@ class IncidentRecorder:
         try:
             from importlib.metadata import version
 
-            return version("gflow-cli")
+            return version("gflow-plus")
         except Exception:  # noqa: BLE001 — manifest metadata is best-effort
             return "unknown"
 

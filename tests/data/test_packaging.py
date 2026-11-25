@@ -20,10 +20,10 @@ def test_built_distributions_contain_sql_migrations(tmp_path: Path) -> None:
         ["uv", "build", "--wheel", "--sdist", "--out-dir", str(dist_dir)],
         check=True,
     )
-    wheel = next(dist_dir.glob("gflow_cli-*.whl"))
+    wheel = next(dist_dir.glob("gflow_plus-*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         assert "gflow_cli/data/migrations/0001_initial.sql" in archive.namelist()
-    sdist = next(dist_dir.glob("gflow_cli-*.tar.gz"))
+    sdist = next(dist_dir.glob("gflow_plus-*.tar.gz"))
     with tarfile.open(sdist) as archive:
         assert any(
             name.endswith("src/gflow_cli/data/migrations/0001_initial.sql")

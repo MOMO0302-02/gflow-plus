@@ -41,7 +41,7 @@ def _home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("TZ", "America/New_York")
-    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "in_ci", lambda: False)
     monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     telemetry.killed.cache_clear()
     return home
@@ -647,9 +647,9 @@ def test_report_survives_the_parent_exiting_at_once(_home: Path, tmp_path: Path)
     thread.start()
     endpoint = f"http://127.0.0.1:{server.server_port}/report"
     metadata = tmp_path / "metadata"
-    dist = metadata / "gflow_cli-0.0.0.dist-info"
+    dist = metadata / "gflow_plus-0.0.0.dist-info"
     dist.mkdir(parents=True)
-    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: gflow-cli\nVersion: 0.0.0\n")
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: gflow-plus\nVersion: 0.0.0\n")
     source_root = str(Path(telemetry.__file__).resolve().parents[1])
     child_code = f"import gflow_cli.telemetry_upload as t; t._ENDPOINT = {endpoint!r}; t._main()"
     shim = (
