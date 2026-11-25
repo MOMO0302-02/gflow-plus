@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -366,6 +367,34 @@ class AccountPoolScheduler:
         if profile is None or profile == "*":
             return await self._browser_pool.close_all()
         return 1 if await self._browser_pool.evict(profile) else 0
+
+    def prune_stale_accounts(self) -> list[str]:
+        """Remove ``plus_state.db`` rows whose profile directories no longer exist on disk."""
+        disk_profiles = {meta.name for meta in self._list_profiles()}
+        return self._store.prune_account_states(disk_profiles)
+
+    async def sync_accounts(
+        self,
+        *,
+        from_homes: Sequence[str | Path] | None = None,
+        overwrite_newer: bool = False,
+        prune_state: bool = True,
+        refresh: bool = True,
+        renew: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Synchronize logged-in accounts from legacy/other homes and align pool state."""
+        from gflow_cli.plus.pool.sync import sync_accounts_into_pool
+
+        return await sync_accounts_into_pool(
+            self,
+            from_homes=from_homes,
+            overwrite_newer=overwrite_newer,
+            prune_state=prune_state,
+            refresh=refresh,
+            renew=renew,
+            dry_run=dry_run,
+        )
 
     def pick_profile(
         self,

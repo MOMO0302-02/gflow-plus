@@ -30,6 +30,7 @@
 | `gflow_plus_cancel_job` | 取消还在排队、没开始跑的任务 | 否 |
 | `gflow_plus_retry_job` | 一键重跑失败/已取消的单个任务或整批失败项（已扣费或不确定状态的任务默认拒跑，防止双扣） | 是 |
 | `gflow_plus_profile_control` | 运行时运维：清除冷却、无头续期登录态、临时禁用/恢复某账号、关闭空闲热浏览器 | 否 |
+| `gflow_plus_sync_accounts` | 升级或切换数据目录后同步已登录账号：自动扫描系统默认目录或指定备份目录导入缺失账号、延续默认账号、清理状态库孤儿记录并刷新余额 | 否 |
 | `gflow_plus_list_media` | 跨所有账号检索本地已生成的图片/视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 在 Windows 上立即隐藏后台 Chrome 窗口的任务栏图标 | 否 |
 
@@ -104,6 +105,7 @@ gflow plus health                                      # 检查所有账号（�
 | `gflow plus upscale` | 通过归属账号的热浏览器通道放大图片或视频 |
 | `gflow plus extend` | 通过归属账号的热浏览器通道续拍一段视频 |
 | `gflow plus run-batch` | 按 JSON 清单把一批（可带 `job:<label>` 依赖）任务分给健康账号执行 |
+| `gflow plus sync` | 升级或切换 `GFLOW_CLI_HOME` 后同步已登录账号并对齐 `plus_state.db`（支持 `--from-home`、`--dry-run`、`--overwrite-newer`） |
 | `gflow plus hide-taskbar` | 隐藏后台 Chrome 窗口的任务栏图标（仅 Windows） |
 
 官方原有的命令（`gflow image`、`gflow video`、`gflow credits` 等）全部可用，见 [官方使用文档](../docs/USAGE.md)（英文）。
@@ -134,7 +136,7 @@ gflow plus health                                      # 检查所有账号（�
 - `plus/main`：主分支，仓库首页显示的就是它。
 - 每个版本都会打标签并发布在 [版本列表](https://github.com/MOMO0302-02/gflow-plus/releases) 里。
 
-升级时重新执行安装命令，换成新的版本号，在 `uv pip install` 后面加上 `--reinstall-package gflow-plus`。升级前先确认没有任务在跑（`gflow plus pool status` 显示 0 个进行中的任务）。
+升级时重新执行安装命令，换成新的版本号，在 `uv pip install` 后面加上 `--reinstall-package gflow-plus`。升级前先确认没有任务在跑（`gflow plus pool status` 显示 0 个进行中的任务）；升级完成后可执行 `gflow plus sync`（或传 `--from-home <旧目录>`）一键同步已登录账号并刷新账号池状态。
 
 ## 许可
 

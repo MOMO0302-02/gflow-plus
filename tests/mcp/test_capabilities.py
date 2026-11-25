@@ -122,6 +122,7 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "plus upscale": None,
     "plus extend": _VIDEO,
     "plus run-batch": _IMAGE,
+    "plus sync": None,
     "plus hide-taskbar": None,
 }
 

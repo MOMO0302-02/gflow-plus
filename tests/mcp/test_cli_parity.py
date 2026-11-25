@@ -102,6 +102,7 @@ CLI_TO_MCP: dict[str, str] = {
     "plus upscale": "gflow_plus_submit_upscale",
     "plus extend": "gflow_plus_submit_extend",
     "plus run-batch": "gflow_plus_submit_batch",
+    "plus sync": "gflow_plus_sync_accounts",
     "plus hide-taskbar": "gflow_plus_hide_taskbar",
 }
 

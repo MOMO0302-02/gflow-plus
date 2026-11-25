@@ -38,6 +38,7 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | `gflow_plus_cancel_job` | 取消还在排队的任务；已经在跑的停不下来 | 否 |
 | `gflow_plus_retry_job` | 重跑单个失败/已取消任务或整批失败项（`may_have_spent=true` 或 `indeterminate` 默认拒跑，需显式 `force_spent=true`） | 是 |
 | `gflow_plus_profile_control` | 清除冷却、无头续期登录态、临时禁用/恢复账号、关闭空闲热浏览器 | 否 |
+| `gflow_plus_sync_accounts` | 升级或切换 `GFLOW_CLI_HOME` 后同步已登录账号：自动探测系统默认目录或指定备份目录导入缺失账号、延续默认账号、清理 `plus_state.db` 孤儿记录并刷新余额 | 否 |
 | `gflow_plus_list_media` | 跨所有账号检索本地 `gflow.db` 里的图片和视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 立即隐藏一次任务栏里的 gflow Chrome | 否 |
 
@@ -62,6 +63,7 @@ gflow plus media [--kind all|image|video] [--profile NAME] [--query TEXT] [--lim
 gflow plus upscale MEDIA_ID [--media-kind image|video] [--scale SCALE] [--json]  # 视频 4k 会花积分
 gflow plus extend MEDIA_ID PROMPT [--aspect 9:16|16:9] [--max-credits N] [--json]  # 会花积分
 gflow plus run-batch manifest.json [--no-skip-if-exists] [--json]   # 会花积分
+gflow plus sync [--from-home DIR]... [--overwrite-newer] [--no-prune-state] [--no-refresh] [--renew] [--dry-run] [--json]
 gflow plus hide-taskbar [--json]
 ```
 

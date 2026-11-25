@@ -27,6 +27,7 @@ EXPECTED_PLUS_TREE = {
     "plus upscale": True,
     "plus extend": True,
     "plus run-batch": True,
+    "plus sync": False,
     "plus hide-taskbar": False,
 }
 

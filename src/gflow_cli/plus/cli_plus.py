@@ -484,6 +484,92 @@ def plus_extend(
 
 
 @spends_credits(False)
+@plus.command("sync")
+@click.option(
+    "--from-home",
+    "from_homes",
+    multiple=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Legacy or backup GFLOW_CLI_HOME directory to import logged-in profiles from "
+        "(repeatable; defaults to scanning the OS default home when distinct)."
+    ),
+)
+@click.option(
+    "--overwrite-newer",
+    is_flag=True,
+    default=False,
+    help="Replace an existing profile when the source Cookies file is strictly newer.",
+)
+@click.option(
+    "--prune-state/--no-prune-state",
+    default=True,
+    show_default=True,
+    help="Remove stale plus_state.db rows whose profile directory no longer exists on disk.",
+)
+@click.option(
+    "--refresh/--no-refresh",
+    default=True,
+    show_default=True,
+    help="Refresh all accounts' balances and session health after syncing (zero credits).",
+)
+@click.option(
+    "--renew",
+    is_flag=True,
+    default=False,
+    help="Headlessly renew expired sessions before refreshing credits.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview discovered accounts and state cleanup without writing to disk or network.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def plus_sync(
+    from_homes: tuple[Path, ...],
+    overwrite_newer: bool,
+    prune_state: bool,
+    refresh: bool,
+    renew: bool,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Sync logged-in accounts after upgrading and align plus_state.db with disk."""
+    manager = get_pool_manager()
+    try:
+        result = asyncio.run(
+            manager.scheduler.sync_accounts(
+                from_homes=list(from_homes) or None,
+                overwrite_newer=overwrite_newer,
+                prune_state=prune_state,
+                refresh=refresh,
+                renew=renew,
+                dry_run=dry_run,
+            )
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--from-home'") from exc
+
+    if as_json:
+        click.echo(json_output.dumps(result))
+        return
+
+    verb = "Account sync preview (dry-run)" if dry_run else "Account sync complete"
+    console.print(
+        f"{verb}: imported={len(result['imported'])} updated={len(result['updated'])} "
+        f"skipped={len(result['skipped'])} pruned={len(result['pruned_state_profiles'])}"
+    )
+    if result["default_profile_synced"]:
+        console.print(f"Default profile synced: [cyan]{result['default_profile_synced']}[/cyan]")
+    health = result["health"]
+    console.print(
+        f"Healthy lanes: {health['healthy_profiles']}/{health['total_profiles']} | "
+        f"Total credits: [bold]{health['total_credits']}[/bold]"
+    )
+
+
+@spends_credits(False)
 @plus.command("hide-taskbar")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
 def plus_hide_taskbar(as_json: bool) -> None:

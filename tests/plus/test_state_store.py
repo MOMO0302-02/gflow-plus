@@ -78,3 +78,19 @@ def test_account_state_update_keeps_fields_it_was_not_given(tmp_path: Path) -> N
     state = store.get_account_state("acc")
     assert (state["credits"], state["cooldown_until"], state["cooldown_reason"]) == (60, None, None)
     assert state["last_error"] == ""
+
+
+def test_prune_account_states_removes_only_missing_profiles(tmp_path: Path) -> None:
+    store = PlusStateStore(tmp_path / "plus_state.db")
+    store.upsert_account_state("keep_a", credits=100)
+    store.upsert_account_state("keep_b", credits=200)
+    store.upsert_account_state("gone_c", credits=300)
+    store.upsert_account_state("gone_a", credits=400)
+
+    removed = store.prune_account_states({"keep_a", "keep_b"})
+    assert removed == ["gone_a", "gone_c"]
+    assert set(store.list_account_states()) == {"keep_a", "keep_b"}
+
+    assert store.prune_account_states({"keep_a", "keep_b"}) == []
+    assert store.prune_account_states(set()) == ["keep_a", "keep_b"]
+    assert store.list_account_states() == {}

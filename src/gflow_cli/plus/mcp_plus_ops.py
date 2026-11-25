@@ -350,6 +350,69 @@ async def gflow_plus_profile_control(
 
 
 @server.tool(
+    name="gflow_plus_sync_accounts",
+    description=(
+        "Synchronize logged-in Flow profiles after upgrading or switching GFLOW_CLI_HOME "
+        "(zero credits). Automatically discovers authenticated profiles in the OS default "
+        "home (or explicit from_homes), copies missing profiles without transient browser "
+        "lock files, preserves default_profile, prunes orphaned plus_state.db rows, and "
+        "optionally refreshes balances/session health."
+    ),
+)
+@common._guarded  # pyright: ignore[reportPrivateUsage]
+async def gflow_plus_sync_accounts(
+    *,
+    from_homes: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Optional legacy/backup GFLOW_CLI_HOME paths to scan. Omit to auto-scan "
+                "the OS default home when it differs from the active GFLOW_CLI_HOME."
+            )
+        ),
+    ] = None,
+    overwrite_newer: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, overwrite an existing target profile if the source Cookies file "
+                "is strictly newer (skipped if the target profile is busy or leased)."
+            )
+        ),
+    ] = False,
+    prune_state: Annotated[
+        bool,
+        Field(description="Remove plus_state.db rows for profiles deleted from disk."),
+    ] = True,
+    refresh: Annotated[
+        bool,
+        Field(description="Refresh all synced accounts' credit balances after syncing."),
+    ] = True,
+    renew: Annotated[
+        bool,
+        Field(description="Headlessly renew expired sessions during refresh."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        Field(description="Preview sync actions without modifying files, DB, or network."),
+    ] = False,
+) -> dict[str, Any]:
+    """Sync logged-in profiles across home directories and reconcile pool state."""
+    scheduler = core._pool().scheduler  # pyright: ignore[reportPrivateUsage]
+    try:
+        return await scheduler.sync_accounts(
+            from_homes=from_homes,
+            overwrite_newer=overwrite_newer,
+            prune_state=prune_state,
+            refresh=refresh,
+            renew=renew,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        return common._bad_param("Invalid Sync Source", str(exc))  # pyright: ignore[reportPrivateUsage]
+
+
+@server.tool(
     name="gflow_plus_list_media",
     description=(
         "Search or list recently generated images and videos across ALL accounts in the local "

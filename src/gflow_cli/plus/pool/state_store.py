@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Collection, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -173,6 +173,20 @@ class PlusStateStore:
                 "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
             )
             return cur.rowcount
+
+    def prune_account_states(self, valid_profiles: Collection[str]) -> list[str]:
+        """Delete state rows whose profile no longer exists on disk and return their names."""
+        keep = set(valid_profiles)
+        with self._connect() as con:
+            rows = con.execute("SELECT profile FROM plus_account_state").fetchall()
+            stale = sorted(str(r["profile"]) for r in rows if str(r["profile"]) not in keep)
+            if stale:
+                marks = ",".join("?" * len(stale))
+                con.execute(
+                    f"DELETE FROM plus_account_state WHERE profile IN ({marks})",  # noqa: S608
+                    tuple(stale),
+                )
+        return stale
 
     # --- Jobs ---------------------------------------------------------------
 
