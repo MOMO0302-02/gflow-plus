@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+### gflow-plus
+
+- **Per-profile warm browser pool (`WarmBrowserPool`)**: reuses warm Playwright Chrome pages per profile with idle TTL eviction, automatic failure recovery, and clean shutdown hooks in both the MCP server and worker daemon.
+- **Multi-step workflow DAG chaining**: `gflow_plus_submit_batch` and `gflow plus run-batch` now support `job:<label>` references and `depends_on` ordering with cascade failure cancellation across dependent steps.
+- **Five new ops MCP tools and CLI counterparts**: `gflow_plus_submit_upscale` (`submit-upscale`), `gflow_plus_submit_extend` (`submit-extend`), `gflow_plus_retry_job` (`retry-job`), `gflow_plus_profile_control` (`profile-control`), and `gflow_plus_list_media` (`list-media`).
+
+### Fixed
+
+- **Pool store & Linux type checks**: eliminated N+1 queries in `PoolStateStore` and satisfied Linux `pyright` checks in `win_stealth`.
+
+### Documentation
+
+- Switched remaining PyPI install instructions and error hints to `gflow-plus` GitHub URLs, updated `docs/plus/README.md` and `.github/README.md`, and recorded the magpie re-sync steps in `skills/release/SKILL.md`.
+
 ## [1.0.0] - 2026-11-25
 
 gflow-plus becomes an independently maintained fork of gflow-cli. It no longer merges upstream changes, installs from GitHub only, and keeps every gflow-cli 0.106.0 feature plus the upstream changes listed under this version.
@@ -7414,7 +7430,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/MOMO0302-02/gflow-plus/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/MOMO0302-02/gflow-plus/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/MOMO0302-02/gflow-plus/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/MOMO0302-02/gflow-plus/releases/tag/v1.0.0
 [0.106.0]: https://github.com/ffroliva/gflow-cli/compare/v0.105.1...v0.106.0
 [0.105.1]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...v0.105.1
