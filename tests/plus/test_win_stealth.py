@@ -8,6 +8,7 @@ from gflow_cli.plus.win_stealth import (
     _WS_EX_APPWINDOW,
     _WS_EX_TOOLWINDOW,
     compute_stealth_exstyle,
+    is_allowed_process_image,
     is_offscreen_rect,
     is_stealth_enabled,
 )
@@ -34,3 +35,15 @@ def test_compute_stealth_exstyle_sets_toolwindow_and_clears_appwindow() -> None:
 def test_stealth_env_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_PLUS_HIDE_TASKBAR", "0")
     assert is_stealth_enabled() is False
+
+
+def test_allowed_process_image_only_matches_chrome_and_chromium() -> None:
+    assert (
+        is_allowed_process_image(r"C:\Program Files\Google\Chrome\Application\chrome.exe") is True
+    )
+    assert is_allowed_process_image(r"C:\Users\me\chromium\CHROME.EXE") is True
+    assert is_allowed_process_image(r"D:\Apps\chromium\chromium.exe") is True
+    # Electron / Chromium desktop apps share Chrome_WidgetWin_1 and must never be touched
+    assert is_allowed_process_image(r"C:\Program Files\TencentDocs\TencentDocs.exe") is False
+    assert is_allowed_process_image(r"C:\Users\me\AppData\Local\Feishu\Feishu.exe") is False
+    assert is_allowed_process_image("") is False

@@ -6,11 +6,12 @@ Windows, off-screen ``WS_EX_APPWINDOW`` windows still occupy taskbar buttons
 and flash orange/red on focus events.
 
 This module strips ``WS_EX_APPWINDOW`` and adds ``WS_EX_TOOLWINDOW`` ONLY on
-top-level ``Chrome_WidgetWin_1`` windows whose coordinates are already
-off-screen (``left <= -10000`` or ``top <= -10000``), leaving the user's own
-visible Chrome windows completely untouched. The window stays ``WS_VISIBLE``
-(shown with ``SW_SHOWNOACTIVATE``), so Chromium rendering and reCAPTCHA behave
-identically while taskbar icons disappear completely.
+non-minimized top-level ``Chrome_WidgetWin_1`` windows belonging to Chrome/Chromium
+whose coordinates are already off-screen (``left <= -10000`` or ``top <= -10000``),
+leaving the user's own visible or minimized Chrome and Electron windows completely
+untouched. The window stays ``WS_VISIBLE`` (shown with ``SW_SHOWNOACTIVATE``), so
+Chromium rendering and reCAPTCHA behave identically while taskbar icons disappear
+completely.
 
 Controlled by ``GFLOW_PLUS_HIDE_TASKBAR`` (default ``1`` / enabled on Windows).
 Non-Windows platforms are a clean no-op.
@@ -37,6 +38,8 @@ _WS_EX_APPWINDOW = 0x00040000
 _SW_HIDE = 0
 _SW_SHOWNOACTIVATE = 4
 _FLASHW_STOP = 0
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ALLOWED_PROCESS_NAMES = frozenset({"chrome.exe", "chromium.exe"})
 
 
 def is_stealth_enabled() -> bool:
@@ -50,6 +53,11 @@ def is_stealth_enabled() -> bool:
 def is_offscreen_rect(left: int, top: int) -> bool:
     """True when a window sits at gflow's off-screen launch coordinates."""
     return left <= _OFFSCREEN_THRESHOLD or top <= _OFFSCREEN_THRESHOLD
+
+
+def is_allowed_process_image(image_path: str) -> bool:
+    """True only for Chrome/Chromium executables (never Electron apps like TencentDocs)."""
+    return os.path.basename(image_path.replace("\\", "/")).lower() in _ALLOWED_PROCESS_NAMES
 
 
 def compute_stealth_exstyle(current_exstyle: int) -> int:
@@ -78,8 +86,39 @@ class _FLASHWINFO(ctypes.Structure):
     ]
 
 
+def _get_window_process_image(user32: object, kernel32: object, hwnd: int) -> str | None:
+    """Return full executable path for ``hwnd``'s owning process, or ``None``."""
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))  # type: ignore[attr-defined]
+    if pid.value == 0:
+        return None
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)  # type: ignore[attr-defined]
+    if not handle:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):  # type: ignore[attr-defined]
+            return None
+        return buf.value
+    finally:
+        kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+
+
 def _win32_hide_offscreen_chrome() -> int:
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
     hidden_count = 0
 
     enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -88,9 +127,17 @@ def _win32_hide_offscreen_chrome() -> int:
         nonlocal hidden_count
         if not user32.IsWindowVisible(hwnd):
             return True
+        # Minimized Windows apps report GetWindowRect == (-32000, -32000) while
+        # remaining WS_VISIBLE; never hide minimized user windows.
+        if user32.IsIconic(hwnd):
+            return True
         class_buf = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, class_buf, 64)
         if class_buf.value != "Chrome_WidgetWin_1":
+            return True
+
+        image_path = _get_window_process_image(user32, kernel32, hwnd)
+        if not image_path or not is_allowed_process_image(image_path):
             return True
 
         rect = wintypes.RECT()
