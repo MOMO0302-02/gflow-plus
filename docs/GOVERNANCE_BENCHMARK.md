@@ -95,10 +95,6 @@ History of the gate's calibration:
 - **On demand** — before adding/removing a material path, or when reviewing the gate.
 - **Before a release** — a quick `uv run python scripts/dev/materiality_backtest.py`
   is part of governance hygiene.
-- **Automated** — [`.github/workflows/governance-benchmark.yml`](../.github/workflows/governance-benchmark.yml)
-  runs it monthly (and on `workflow_dispatch`) and writes the report to the job
-  summary. It is **non-blocking and read-only** (no token, fork-safe) — a dashboard,
-  not a gate.
 
 ## See also
 

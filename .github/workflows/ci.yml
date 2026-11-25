@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [plus/main]
   pull_request:
   # A run that ends in startup_failure cannot be re-run (measured 2026-11-11 on the v0.97.0
   # merge). This lets a fresh run be started on main: gh workflow run ci.yml --ref main
@@ -19,7 +19,7 @@ permissions:
 # main is never cancelled: every release-line commit keeps its full record.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/plus/main' }}
 
 env:
   # Suppress Node.js deprecation warnings and align with user request to use Node 22/remove noise.
@@ -539,77 +539,6 @@ jobs:
       # tests share the marker but skip without an LLM endpoint; skips do not count.
       - name: Test-count guard (all storage tests executed, none skipped)
         run: uv run --no-sync python scripts/ci/check_test_count.py pytest-containers.xml 13
-
-  # ── SonarCloud analysis ───────────────────────────────────────────────────
-  sonar:
-    name: SonarCloud analysis
-    runs-on: ubuntu-latest
-    needs: [test, test-313]   # wait for tests + the combined coverage report
-    permissions:
-      contents: read
-      pull-requests: read  # PR-context analysis / decoration lookups
-    # Forked pull_request runs do not receive repository secrets, so SONAR_TOKEN
-    # is empty there and the scanner fails before analysis. Dependabot-triggered
-    # runs are the same case: GitHub serves them the separate Dependabot secrets
-    # namespace, so SONAR_TOKEN is also empty even though the branch is in-repo.
-    # Keep SonarCloud on trusted pushes/internal PRs where the token is available.
-    if: >
-      always() &&
-      github.actor != 'dependabot[bot]' &&
-      (
-        github.event_name != 'pull_request' ||
-        github.event.pull_request.head.repo.full_name == github.repository
-      )
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0  # shallow clones break blame / new-code detection
-
-      - name: Download coverage report
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: coverage-xml
-        continue-on-error: true  # graceful if coverage upload was skipped
-
-      # SonarCloud is a third-party service; it does have outages (seen live
-      # 2026-07-16, ~504s across its whole API including the unauthenticated
-      # /api/system/status endpoint). Reassessed fresh on every run — no manual
-      # flag to remember to flip back once it recovers. A skip here still lets
-      # the job COMPLETE (green), it just doesn't run the scan step; local
-      # coverage during an outage comes from the shared SonarQube instance
-      # (scripts/dev/sonar-local-scan.sh) — see docs/GITHUB.md § SonarCloud
-      # outage handling.
-      - name: Check SonarCloud availability
-        id: sonarcloud_health
-        run: |
-          if curl -sf -m 10 "https://sonarcloud.io/api/system/status" | grep -q '"status":"UP"'; then
-            echo "up=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "up=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::SonarCloud is unreachable or degraded — skipping the scan for this run (not a code quality failure). Verify locally with scripts/dev/sonar-local-scan.sh before merging if this persists, and re-run this job once SonarCloud recovers."
-          fi
-
-      # main's new-code window is "since the previous version". Without a version on the
-      # analysis it never moved past 2026-05-16, so a SonarSource rule update on 2026-11-10
-      # re-flagged six months of unchanged code as new bugs and turned main red.
-      - name: Read package version
-        id: pkg
-        run: echo "version=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
-
-      - name: SonarCloud scan
-        if: steps.sonarcloud_health.outputs.up == 'true'
-        # sonarcloud-github-action is ARCHIVED upstream (dependabot never bumps
-        # archived actions, so its pin would rot silently); sonarqube-scan-action
-        # is SonarSource's maintained successor and serves SonarCloud when
-        # SONAR_HOST_URL points at it.
-        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
-          SONAR_HOST_URL: https://sonarcloud.io
-        with:
-          args: -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}
 
   # Fails on N+1 queries and swallowed programming errors (see dev/sharpit_app.py). sharpit is pinned: a new release
   # can add findings, so upgrading it is a change of its own.
