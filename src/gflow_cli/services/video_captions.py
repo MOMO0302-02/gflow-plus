@@ -30,6 +30,7 @@ from gflow_cli.services.media_recovery import resolve_asset
 from gflow_cli.services.speech_ports import Transcriber, TranscriptionRequest
 from gflow_cli.services.transcribers.openai_compatible import make_transcriber
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
+from gflow_cli.update_check import extra_install_command
 
 log = structlog.get_logger(__name__)
 _TIMESTAMP = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
@@ -162,7 +163,7 @@ def _require_chain_extra() -> tuple[Any, Any]:
         return av, (Image, ImageDraw, ImageFont)
     except ImportError as exc:
         raise FrameExtractionError(
-            detail="Install video processing support with `pip install 'gflow-cli[chain]'`.",
+            detail=f"Install video processing support with `{extra_install_command('chain')}`.",
             charged="no",
         ) from exc
 

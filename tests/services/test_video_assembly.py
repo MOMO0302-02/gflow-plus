@@ -729,7 +729,7 @@ def test_missing_pyav_error_is_uncharged_and_names_extra(
     with pytest.raises(VideoAssemblyError) as captured:
         assemble_videos([tmp_path / "unused.mp4"], tmp_path / "out.mp4")
     assert captured.value.charged == "no"
-    assert "gflow-cli[chain]" in captured.value.detail
+    assert "gflow-plus[chain] @ git+https://github.com/" in captured.value.detail
 
 
 def test_two_publishers_racing_over_stale_file_first_survives_second_refused(

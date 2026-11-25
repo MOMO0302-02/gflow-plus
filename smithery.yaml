@@ -9,6 +9,6 @@ startCommand:
   commandFunction: |-
     (config) => ({
       command: 'uvx',
-      args: ['gflow-cli', 'mcp', 'run'],
+      args: ['--from', 'git+https://github.com/MOMO0302-02/gflow-plus', 'gflow', 'mcp', 'run'],
       env: config.gflowHome ? { GFLOW_CLI_HOME: config.gflowHome } : {}
     })

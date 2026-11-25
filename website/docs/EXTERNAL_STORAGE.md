@@ -25,12 +25,12 @@ Cloud backends are optional dependencies. Install the matching extra in the
 environment where `gflow` runs:
 
 ```bash
-uv tool install "gflow-cli[s3]"
-uv tool install "gflow-cli[gcs]"
+uv tool install "gflow-plus[s3] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+uv tool install "gflow-plus[gcs] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 If the tool is already installed, reinstall with the extra in your package
-manager of choice, for example `uv tool install --force "gflow-cli[s3]"`.
+manager of choice, for example `uv tool install --force "gflow-plus[s3] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`.
 
 ## Object Layout
 
@@ -141,7 +141,7 @@ configured bucket.
 
 | Symptom | Check |
 |---|---|
-| `Cloud storage requires universal_pathlib` | Reinstall with `gflow-cli[s3]` or `gflow-cli[gcs]`. |
+| `Cloud storage requires universal_pathlib` | Reinstall with `gflow-plus[s3]` or `gflow-plus[gcs]`. |
 | `GFLOW_CLI_STORAGE_URI scheme not supported` | Use `s3://...` or `gs://...`; local paths belong in `GFLOW_CLI_OUTPUT_DIR`. |
 | S3 write fails against MinIO | Confirm `AWS_ENDPOINT_URL`, access key, secret key, bucket name, and region. |
 | GCS write fails locally | Confirm `STORAGE_EMULATOR_HOST` for emulator runs or ADC/service-account credentials for real GCS. |

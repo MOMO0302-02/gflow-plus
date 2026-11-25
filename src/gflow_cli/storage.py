@@ -1,10 +1,9 @@
 """Cloud storage helpers for gflow-cli.
 
 ``storage_path()`` returns a local ``Path`` or a cloud ``UPath`` depending on
-``GFLOW_CLI_STORAGE_URI``.  Cloud deps are optional extras::
-
-    pip install gflow-cli[gcs]   # adds gcsfs
-    pip install gflow-cli[s3]    # adds s3fs + aiobotocore
+``GFLOW_CLI_STORAGE_URI``.  Cloud deps are optional extras ``gcs`` (gcsfs) and ``s3``
+(s3fs + aiobotocore), installed from GitHub with
+:func:`gflow_cli.update_check.extra_install_command`.
 
 Security notes
 --------------
@@ -24,6 +23,8 @@ import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from gflow_cli.update_check import extra_install_command
 
 if TYPE_CHECKING:
     from gflow_cli.errors import Charged, NextAction
@@ -76,8 +77,8 @@ def _make_upath(uri: str) -> Path:
         msg = (
             "Cloud storage requires universal_pathlib. "
             "Install the matching extra:\n"
-            "  pip install 'gflow-cli[gcs]'   # Google Cloud Storage\n"
-            "  pip install 'gflow-cli[s3]'    # Amazon S3 / MinIO"
+            f"  {extra_install_command('gcs')}   # Google Cloud Storage\n"
+            f"  {extra_install_command('s3')}    # Amazon S3 / MinIO"
         )
         raise ImportError(
             msg,

@@ -11,8 +11,8 @@ subscription.
 ## Prerequisites
 
 1. Active **Google AI Pro or Ultra** subscription on a Google account.
-2. `gflow-cli` installed (`pip install gflow-cli` or `uv pip install
-   gflow-cli`).
+2. gflow-plus installed from GitHub (`pip install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`
+   or `uv pip install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`).
 3. A Playwright Chromium user-data-dir signed in to Flow:
 
    ```bash

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "author": "ffroliva",
   "authorUrl": "https://github.com/ffroliva",
-  "homepage": "https://ffroliva.github.io/gflow-cli/",
+  "homepage": "https://github.com/MOMO0302-02/gflow-plus",
   "icon": "🎬",
   "category": "media-generate",
   "description": "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex or the terminal, on your own Google account's Flow credits.",

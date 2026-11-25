@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP) Server for gflow-cli
 
-The gflow-cli MCP server connects Claude Code, Claude Desktop, Cursor, VS Code, Codex and any other MCP client to Google Flow. Its tools generate Veo 3.1 and Omni video and Nano Banana and Imagen images, create local speech narration, manage reusable Characters, upscale, download, and read the Flow credit balance, over stdio (`gflow mcp run`) or Streamable HTTP (`gflow serve`). `gflow mcp run --no-spend` registers no credit-spending tool. Quick setup: `uv tool install gflow-cli`, `gflow auth login --browser chrome`, then `gflow mcp setup` (Claude Desktop) or the Claude Code plugin ([§ 4](#4-setup-instructions)).
+The gflow-cli MCP server connects Claude Code, Claude Desktop, Cursor, VS Code, Codex and any other MCP client to Google Flow. Its tools generate Veo 3.1 and Omni video and Nano Banana and Imagen images, create local speech narration, manage reusable Characters, upscale, download, and read the Flow credit balance, over stdio (`gflow mcp run`) or Streamable HTTP (`gflow serve`). `gflow mcp run --no-spend` registers no credit-spending tool. Quick setup: `uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`, `gflow auth login --browser chrome`, then `gflow mcp setup` (Claude Desktop) or the Claude Code plugin ([§ 4](#4-setup-instructions)).
 
 This document describes the design, configuration, security model, and developer setup for the `gflow-cli` MCP server.
 
@@ -312,7 +312,7 @@ with no local copy, under one FAILED operation.
 ### Claude Code — the plugin (one step)
 
 ```
-/plugin marketplace add ffroliva/gflow-cli
+/plugin marketplace add MOMO0302-02/gflow-plus
 /plugin install gflow@gflow-cli
 ```
 
@@ -335,15 +335,15 @@ so there is nothing further to configure.
 > `tools/list` at all. Register the server yourself with `gflow mcp run --no-spend` (see the
 > manual setup below) instead of using the bundled entry.
 
-The plugin runs `gflow mcp run`, so `gflow` must be on your `PATH` (`uv tool install gflow-cli`)
+The plugin runs `gflow mcp run`, so `gflow` must be on your `PATH` (`uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`)
 and you must have authenticated once with `gflow auth login --browser chrome`.
 
-> **Which revision you get.** `/plugin marketplace add ffroliva/gflow-cli` reads the marketplace
-> from the repository's **default branch**, which in this project is `develop` — the integration
-> branch, not the last release. So the plugin you install tracks `develop`, while the version
+> **Which revision you get.** `/plugin marketplace add MOMO0302-02/gflow-plus` reads the marketplace
+> from the repository's **default branch**, which in this project is `plus/main` — not the last
+> release tag. So the plugin you install tracks `plus/main`, while the version
 > string in its manifest and the documentation links inside its skills both point at the last
 > released state. If you want a released revision, install from a tag instead of the default
-> branch, or use the manual MCP setup below and a pinned `gflow-cli` from PyPI.
+> branch, or use the manual MCP setup below and gflow-plus installed from a release tag.
 
 ### Claude Desktop Integration
 Run the configuration helper command in your terminal:
@@ -363,7 +363,7 @@ Other targets: `gflow mcp setup --target cursor` (`~/.cursor/mcp.json`) and `--t
 Depending on how you installed `gflow-cli`, add one of the following configuration blocks under the `mcpServers` key of your `claude_desktop_config.json`:
 
 ##### Option A: Global Installation (Recommended)
-Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-cli` or `pip install gflow-cli`):
+Use this if you installed gflow-plus globally (e.g. via `uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"` or `pip install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"`):
 ```json
 {
   "mcpServers": {

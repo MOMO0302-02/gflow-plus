@@ -17,13 +17,13 @@ Before you begin, ensure you have:
 Install the CLI tool using `uv`:
 
 ```bash
-uv tool install gflow-cli
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 Download the Chromium browser binary for Playwright:
 
 ```bash
-uv tool run --from gflow-cli playwright install chromium
+uv tool run --from "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" playwright install chromium
 ```
 
 This download requires 150 MB of disk space.

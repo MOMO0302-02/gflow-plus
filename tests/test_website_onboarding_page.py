@@ -143,7 +143,9 @@ def test_copy_button_copies_every_command_without_prompts(browser: Browser) -> N
             .map(c => c.textContent.trim()).join('\\n'))"""
     )
     assert copied == expected and all(copied), copied
-    assert "/plugin marketplace add ffroliva/gflow-cli\n/plugin install gflow@gflow-cli" in copied
+    assert (
+        "/plugin marketplace add MOMO0302-02/gflow-plus\n/plugin install gflow@gflow-cli"
+    ) in copied
     assert (
         "gflow mcp setup\ngflow mcp setup --target cursor\ngflow mcp setup --target vscode"
         in copied

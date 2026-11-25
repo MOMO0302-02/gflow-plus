@@ -34,6 +34,7 @@ import structlog
 
 from gflow_cli.config import BrowserEngine, get_settings
 from gflow_cli.errors import BrowserEngineUnavailableError
+from gflow_cli.update_check import extra_install_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -42,8 +43,8 @@ logger = structlog.get_logger(__name__)
 
 _PATCHRIGHT_PIP_HINT = (
     "GFLOW_CLI_BROWSER_ENGINE=patchright but the 'patchright' package is not "
-    "installed. Install the pinned version with `pip install 'gflow-cli[patchright]'` "
-    "(or `uv pip install 'gflow-cli[patchright]'`). When using system Chrome "
+    f"installed. Install the pinned version with `{extra_install_command('patchright')}`. "
+    "When using system Chrome "
     "(channel=chrome, the gflow default) you do NOT need `patchright install "
     "chromium`. Or unset GFLOW_CLI_BROWSER_ENGINE to use the default playwright "
     "engine."

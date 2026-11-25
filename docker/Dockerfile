@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # build, so a pinned version stops resolving within weeks. The trade-off is that this
 # layer caches indefinitely and a rebuild is what picks up a newer Chrome.
 ARG GFLOW_VERSION=1.0.0
-RUN pip install --no-cache-dir "gflow-cli==${GFLOW_VERSION}"
+RUN pip install --no-cache-dir "gflow-plus @ https://github.com/MOMO0302-02/gflow-plus/archive/refs/tags/v${GFLOW_VERSION}.tar.gz"
 
 VOLUME ["/data"]
 WORKDIR /data

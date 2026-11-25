@@ -2,12 +2,9 @@
 
 # gflow-cli: MCP server and CLI for Google Flow (Veo 3.1, Omni, Nano Banana)
 
-> **gflow-cli is an open-source MCP server and command-line tool that automates [Google Flow](https://labs.google/fx/tools/flow).** It generates Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or your terminal, billed to your own Google account's Flow credits. Install it from PyPI with `uv tool install gflow-cli` (MIT, macOS, Windows and Linux).
+> **gflow-cli is an open-source MCP server and command-line tool that automates [Google Flow](https://labs.google/fx/tools/flow).** It generates Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or your terminal, billed to your own Google account's Flow credits. Install it from GitHub with `uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"` (MIT, macOS, Windows and Linux).
 
-[![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
-[![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
-[![PyPI downloads](https://static.pepy.tech/badge/gflow-cli/month)](https://pepy.tech/project/gflow-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: beta](https://img.shields.io/badge/status-beta-blue.svg)](docs/PROJECT_STATUS.md)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=coverage)](https://sonarcloud.io/component_measures?id=ffroliva_gflow-cli&metric=coverage)
@@ -26,7 +23,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 | | |
 |---|---|
 | **What it is** | One Python package that is both a CLI (`gflow`) and an MCP server (`gflow mcp run`, `gflow serve`) for Google Flow |
-| **Agent surface** | **27 MCP tools** plus resources and prompts, over stdio and Streamable HTTP; listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.ffroliva/gflow-cli` |
+| **Agent surface** | **27 MCP tools** plus resources and prompts, over stdio and Streamable HTTP |
 | **Terminal surface** | 70+ commands with typed exit codes, most with `--json` output; `gflow --help --json` prints the whole tree for agents |
 | **Video models** | Veo 3.1 Lite, Fast and Quality; Omni Flash and Omni 1.2 Flash (up to 15 s, up to 7 reference images) |
 | **Image models** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
@@ -52,18 +49,18 @@ Features on the way are tracked in [#1367](https://github.com/ffroliva/gflow-cli
 Install gflow-cli and sign in once, then register the MCP server with your client.
 
 ```bash
-uv tool install gflow-cli
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 gflow auth login --browser chrome
 ```
 
 | Client | One step |
 |---|---|
-| **Claude Code** | `/plugin marketplace add ffroliva/gflow-cli` then `/plugin install gflow@gflow-cli` (adds the MCP server plus the `gflow-cli` and `video-production` skills) |
+| **Claude Code** | `/plugin marketplace add MOMO0302-02/gflow-plus` then `/plugin install gflow@gflow-cli` (adds the MCP server plus the `gflow-cli` and `video-production` skills) |
 | **Claude Desktop** | `gflow mcp setup` |
 | **Cursor** | `gflow mcp setup --target cursor` |
 | **VS Code** | `gflow mcp setup --target vscode` |
 | **Codex** | Skills: from a clone, `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`; MCP: register `gflow mcp run` as a stdio server |
-| **Any MCP client** | command `uvx`, arguments `gflow-cli mcp run`; or `gflow serve` for Streamable HTTP at `/mcp` |
+| **Any MCP client** | command `uvx`, arguments `--from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow mcp run`; or `gflow serve` for Streamable HTTP at `/mcp` |
 
 The Claude Code plugin ships disabled, because enabling it starts a server that can spend your Veo credits. For a hard guarantee, register `gflow mcp run --no-spend`, which never registers the credit-spending tools. Full setup: [docs/MCP.md](docs/MCP.md).
 
@@ -72,15 +69,12 @@ The Claude Code plugin ships disabled, because enabling it starts a server that 
 Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64 / Xvfb).
 
 ```bash
-# 1 · Install (uv recommended; also: pip install gflow-cli)
-uv tool install gflow-cli
-uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
-# optional extras: 'gflow-cli[tts]' for `audio narrate` (Edge), 'gflow-cli[chain]' for `video chain`/`assemble`/`captions`
-# later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
-# Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
-#   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
-#   (keep your extras in the spec, e.g. "gflow-cli[patchright]", or their pins stay behind)
-#   (a --user install: py -3.X -m pip install --user --upgrade gflow-cli; see https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update)
+# 1 · Install from a GitHub release tag (uv recommended; also: pip install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0")
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+uv tool run --from "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" playwright install chromium     # one-time, ~150 MB
+# optional extras: 'gflow-plus[tts]' for `audio narrate` (Edge), 'gflow-plus[chain]' for `video chain`/`assemble`/`captions`,
+#   e.g. uv tool install "gflow-plus[chain] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+# later: upgrade by rerunning the install with the new tag and --force (keep your extras in the spec)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
 # Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first (docs/CONFIGURATION.md)
@@ -115,7 +109,7 @@ Scripts that branch on exit codes can opt in to the stable core now (0 ok, 1 err
 > uv tool install --force --with playwright==1.59.0 .
 > ```
 >
-> Installing from PyPI (`uv tool install gflow-cli`) is unaffected — the published range is upper-bounded. Check what you actually have with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
+> Installing from a GitHub tag resolves from the same upper-bounded `pyproject.toml` ranges; add the same `--with playwright==…` pin if you want the locked build. Check what you actually have with `uv tool run --from gflow-plus python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
 
 For the full 10-minute walkthrough with troubleshooting and multi-account setup, see **[USER_GUIDE: Journey 1](docs/USER_GUIDE.md#journey-1--first-time-setup-10-minutes)**.
 
@@ -156,7 +150,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | | **gflow-cli** | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
 |---|---|---|---|---|---|---|
 | Surfaces | **CLI and MCP server (27 tools)**, parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
-| Install | **`uv tool install gflow-cli` (PyPI)** | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
+| Install | **`uv tool install` from a GitHub release tag** | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
 | Official MCP Registry | **Yes** | — | — | — | no MCP | no MCP |
 | MCP over HTTP | **Yes** (`gflow serve`) | — | — | SSE (per its `docs/MCP_GUIDE.md`) | no MCP | no MCP |
 | macOS / Windows / Linux | **All three** | macOS, Windows | All three | — | — | All three |
@@ -185,7 +179,7 @@ The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-c
 
 **Is gflow-cli an official Google tool?** No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.
 
-**Is this the gflow-cli package on npm or JSR?** No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at [github.com/ffroliva/gflow-cli](https://github.com/ffroliva/gflow-cli) and listed in the MCP Registry as `io.github.ffroliva/gflow-cli`.
+**Is this the gflow-cli package on npm or JSR?** No. Other projects use the name, including Node.js packages on npm and JSR. This is gflow-plus, an independently maintained fork of the Python gflow-cli ([github.com/ffroliva/gflow-cli](https://github.com/ffroliva/gflow-cli)), maintained at [github.com/MOMO0302-02/gflow-plus](https://github.com/MOMO0302-02/gflow-plus) and installed from GitHub, not PyPI.
 
 **Do I need a Gemini or Vertex AI API key?** No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.
 
@@ -197,7 +191,7 @@ The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-c
 
 **Does it work with flow.google.com as well as labs.google?** Yes. It drives both Flow frontends and routes by the host Flow serves your account. On flow.google.com it covers text-, image- and reference-to-video from local files, Nano Banana image generation, a single-segment extend, image and video upscale, and characters by `@Name`; the rest keeps the labs driver until ported ([Architecture](#architecture--current-limitations)).
 
-**Which Python version?** Python 3.11 or newer. `uv tool install gflow-cli` handles it for you.
+**Which Python version?** Python 3.11 or newer. `uv tool install` handles it for you.
 
 ## Examples
 
@@ -312,7 +306,6 @@ No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?freq
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/pulls)
 [![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/commits/main)
 [![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli)
-[![PyPI downloads](https://static.pepy.tech/badge/gflow-cli/month)](https://pepy.tech/project/gflow-cli)
 
 ### Project quality
 

@@ -2,7 +2,7 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands drive the real Flow web UI through headed Chrome; audio narration uses an external TTS provider and needs no Flow account.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"` or run ad-hoc with `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow ...`. Flow commands drive the real Flow web UI through headed Chrome; audio narration uses an external TTS provider and needs no Flow account.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
@@ -45,9 +45,9 @@ Before any gflow-cli invocation, verify:
 1. **Python 3.11+** is available (`python --version`).
 2. **uv** is installed (`uv --version`). If not, install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or Windows equivalent from <https://docs.astral.sh/uv/>).
 3. **gflow-cli** is installed OR available via uvx:
-   - Quick: `uvx --from gflow-cli gflow --help` (no install)
-   - Persistent: `uv tool install gflow-cli && gflow --help`
-4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB), for Flow commands. `gflow audio narrate` does not need Chromium.
+   - Quick: `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow --help` (no install)
+   - Persistent: `uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" && gflow --help`
+4. **Playwright Chromium** has been downloaded once: `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 playwright install chromium` (~150 MB), for Flow commands. `gflow audio narrate` does not need Chromium.
 5. **A signed-in profile** exists for Flow commands: `gflow auth status` should print `Flow session verified` and exit 0 (it probes the live session, with no credits, and may open a short-lived headless browser; exit 1 means dead or missing session). If not, run `gflow auth login` and walk the user through the one-time browser sign-in. `gflow audio narrate` does not need a Flow profile or account.
 6. **The user has Flow access** — any Google account with Flow rolled out works. If `gflow image upload` returns 403, missing Flow access is the cause.
 
@@ -112,9 +112,9 @@ gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--re
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
 gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge: none -> t2v, frame -> i2v, --ref -> r2v; frame AND --ref = exit 2 (#1193)
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
-gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free, needs gflow-cli[chain]; normalizes to first clip's size and frame rate
+gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free, needs gflow-plus[chain]; normalizes to first clip's size and frame rate
 gflow video transcribe <file|media-UUID> [--out-file FILE.srt] [--language CODE] [--json]  # configured Whisper-compatible endpoint; no Flow credits
-gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
+gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--json]  # local PyAV/Pillow burn-in (gflow-plus[chain]); auto-transcribes when --srt omitted; no Flow credits
 gflow media trash <media-UUID|asset-id> [--project ID] --yes [--json]  # moves a generated item to Flow's Trash; 0 credits; MCP: gflow_media_trash(confirm=true)
 gflow media restore <media-UUID|asset-id> [--project ID] [--json]      # brings it back; 0 credits; MCP: gflow_media_restore
 # `gflow video` has no `batch` subcommand — that stub never worked and was
@@ -126,7 +126,7 @@ gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
 # Audio narration (no Flow account/browser/credits; text is sent to the selected provider)
 gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--voice ID]                    # Edge: MP3
 gflow audio narrate "A clear voice speaks." --out-file voice.wav --provider gemini [--voice ID]  # Gemini: WAV
-# Edge is keyless but requires `gflow-cli[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
+# Edge is keyless but requires `gflow-plus[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
 # Edge uses Microsoft's unofficial Read Aloud endpoint; Gemini rejects custom --rate/--pitch.
 
 # Characters (reusable, project-scoped subjects)
@@ -322,7 +322,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 | `No session for profile 'default'` | First run, no auth | `gflow auth login` |
 | `403 Forbidden` from upload / generate | Account doesn't have Flow access | Verify in [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) |
 | reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `GFLOW_CLI_HEADLESS=false` and re-run; a headed window passes detection. With `--json`, a mint failure has `type` `…/errors/recaptcha-mint` and exits 1; re-run only when `retryable` is true |
-| `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from gflow-cli playwright install chromium` |
+| `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 playwright install chromium` |
 | Generations all fail with the same UUID | Stale Flow session | `gflow auth login` again to refresh cookies |
 | Quota exceeded | Burned through monthly credits | Wait for reset, or upgrade subscription |
 | Every page step times out, but auth/HTTP calls work | Network reaches Google only through a proxy; the browser ignores `HTTPS_PROXY` | Set `GFLOW_CLI_BROWSER_PROXY=http://host:port` (no credentials: a password-protected proxy is refused, exit 11) |
@@ -349,7 +349,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | An absolute MCP `out_file` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `out_file` relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `--out-file` is unchanged |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
 | `gflow auth refresh` (doesn't exist), or `gflow auth login` as the first move on an expired session | `gflow auth renew` renews an expired session headlessly with no sign-in; `gflow auth login` only when renew reports the session could not be renewed (revoked) |
-| `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
+| `playwright install` or `playwright install --all` | `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 playwright install chromium` (Chromium only, ~150 MB) |
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
 | `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
 | Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` (i2i) or `--initial-frame/--end-frame UUID` (i2v, with `--project`) — no re-upload needed |

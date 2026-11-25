@@ -193,7 +193,7 @@ def test_the_rendered_output_really_keeps_the_brackets() -> None:
     console.print(f"[yellow]-> {escape(hint)}[/yellow]")
     rendered = buf.getvalue()
 
-    assert "gflow-cli[chain]" in rendered, (
+    assert "gflow-plus[chain]" in rendered, (
         "Rich ate the bracketed extra; the user is being told to install the package they "
         f"already have. Rendered: {rendered!r}"
     )

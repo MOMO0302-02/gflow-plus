@@ -20,6 +20,7 @@ from gflow_cli.data.models import AssetKind
 from gflow_cli.data.repository import verified_local_path
 from gflow_cli.errors import DataStoreError, VideoAssemblyError
 from gflow_cli.services.media_recovery import resolve_asset
+from gflow_cli.update_check import extra_install_command
 
 _log = structlog.get_logger(__name__)
 
@@ -816,7 +817,9 @@ def assemble_videos(
         import av
     except ImportError as exc:
         raise VideoAssemblyError(
-            detail="Video assembly requires PyAV. Install with `pip install gflow-cli[chain]`.",
+            detail=(
+                f"Video assembly requires PyAV. Install with `{extra_install_command('chain')}`."
+            ),
             route="video.assemble",
             charged="no",
         ) from exc

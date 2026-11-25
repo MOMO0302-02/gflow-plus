@@ -86,7 +86,7 @@ Two things to check before blaming the compose file:
 The image is two layers that matter, in this order:
 
 1. **Chrome + Xvfb** via `apt-get` — most of the ~1.6 GB, and the slow one.
-2. **`pip install gflow-cli==${GFLOW_VERSION}`** — small and fast.
+2. **gflow-plus from its GitHub tag** (`pip install "gflow-plus @ https://github.com/MOMO0302-02/gflow-plus/archive/refs/tags/v${GFLOW_VERSION}.tar.gz"`) — small and fast.
 
 Because the expensive layer comes first, bumping the gflow version reuses it from cache
 and only the last layer rebuilds. A version bump is seconds, not minutes.
@@ -109,7 +109,7 @@ be undone by a tidy-up that moves the ARG next to `FROM`.
 | Input | Pinned by | Updated by |
 |---|---|---|
 | `python:3.14-slim` base | the `FROM` line | Dependabot (`docker` ecosystem, `/docker`, weekly) |
-| `gflow-cli` | `ARG GFLOW_VERSION` | a release, gated by `tests/test_dockerfile_version_pin.py` |
+| `gflow-plus` (GitHub tag `v${GFLOW_VERSION}`) | `ARG GFLOW_VERSION` | a release, gated by `tests/test_dockerfile_version_pin.py` |
 | `google-chrome-stable` | not pinned | a rebuild |
 
 Chrome is the deliberate gap. Google's apt repo keeps only the current build, so a pinned

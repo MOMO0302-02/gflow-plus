@@ -11,14 +11,15 @@ one of them hands you a container that starts but cannot generate anything.
 
 ## The short version
 
-**PyPI is the only authoritative source.** Everything else either installs *from* PyPI, points
-at this repository, or is a catalog entry that helps people find it. If two channels ever
-disagree, PyPI wins.
+**The GitHub repository is the only authoritative source.** gflow-plus installs from its release
+tags (`vX.Y.Z`); it is not on PyPI, where `gflow-cli` is the original upstream project and
+installing it replaces this fork. Everything else points at this repository or is a catalog entry
+that helps people find it. If two channels ever disagree, the GitHub release wins.
 
 ```bash
-uv tool install gflow-cli                                    # recommended
-uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
-gflow auth login --browser chrome                            # one-time
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"   # recommended
+uv tool run --from "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" playwright install chromium   # one-time, ~150 MB
+gflow auth login --browser chrome   # one-time
 ```
 
 That is the whole install. Every other row below is a convenience or a discovery surface.
@@ -27,10 +28,9 @@ That is the whole install. Every other row below is a convenience or a discovery
 
 | Channel | CLI | Skills | MCP server | Notes |
 |---|:--:|:--:|:--:|---|
-| **[PyPI](https://pypi.org/project/gflow-cli/)** | ✅ | — | ✅ | Authoritative. `gflow`, `flow` and `gflow-cli` console scripts. |
+| **[GitHub release tags](https://github.com/MOMO0302-02/gflow-plus/releases)** | ✅ | — | ✅ | Authoritative. `gflow`, `flow` and `gflow-plus` console scripts. |
 | **Claude Code plugin** | — | ✅ 2 | ✅ | Needs `gflow` already on `PATH`. Ships **disabled**. |
 | **Codex plugin** | — | ✅ 2 | — | Skills only; Codex loads no MCP server from it. |
-| **MCP Registry** | — | — | ✅ | Metadata only — clients build `uvx gflow-cli mcp run` from it. |
 | **Glama container** | — | — | ⚠️ | Starts and lists tools. **Cannot generate.** See [CONTAINER.md](CONTAINER.md). |
 | **Catalogs** (Glama page, cursor.directory, MCP Market, skills.sh, awesome-lists) | — | — | — | Discovery only. They link here; they install nothing. |
 
@@ -39,15 +39,17 @@ The ⚠️ row is the one that surprises people, and it is covered in full in
 
 ## Install channels in detail
 
-### PyPI — the real one
+### GitHub release tags — the real one
 
 ```bash
-uv tool install gflow-cli     # or: pip install gflow-cli / pipx install gflow-cli
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+# or: pip install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+# or: pipx install "git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
-Three console scripts are installed, all the same entry point: `gflow` (what you type), `flow`
-(short alias) and `gflow-cli` (named for the package, so `uvx gflow-cli mcp run` resolves — the
-MCP Registry builds exactly that form and has no field for a different executable name).
+Pinning a version means choosing the tag (`@v1.0.0`). Three console scripts are installed, all
+the same entry point: `gflow` (what you type), `flow` (short alias) and `gflow-plus` (named for
+the package). To run the MCP server without installing: `uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow mcp run`.
 
 Upgrades reinstall from the GitHub repository: `uv pip install --python <venv python>
 --reinstall-package gflow-plus "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"`.
@@ -55,7 +57,7 @@ Upgrades reinstall from the GitHub repository: `uv pip install --python <venv py
 ### Claude Code plugin
 
 ```
-/plugin marketplace add ffroliva/gflow-cli
+/plugin marketplace add MOMO0302-02/gflow-plus
 /plugin install gflow@gflow-cli
 ```
 
@@ -129,7 +131,8 @@ Worth stating plainly, because each of these is a reasonable thing to expect and
 
 ## Verifying a channel is really us
 
-Anything claiming to be gflow-cli should trace back to **`github.com/ffroliva/gflow-cli`** or
-**`pypi.org/project/gflow-cli`**. The project is MIT-licensed, so mirrors and forks are allowed —
+Anything claiming to be gflow-plus should trace back to **`github.com/MOMO0302-02/gflow-plus`**.
+The original project is `github.com/ffroliva/gflow-cli`, published on PyPI as `gflow-cli`; that
+package is upstream, not this fork. The project is MIT-licensed, so mirrors and forks are allowed —
 but they are not us, and we cannot vouch for what they ship. If you find a listing that looks
-wrong or stale, [open an issue](https://github.com/ffroliva/gflow-cli/issues).
+wrong or stale, [open an issue](https://github.com/MOMO0302-02/gflow-plus/issues).

@@ -16,6 +16,7 @@ import pytest
 from gflow_cli.api import _engine
 from gflow_cli.config import BrowserEngine, reset_settings
 from gflow_cli.errors import EXIT_CODE_MAP, BrowserEngineUnavailableError
+from gflow_cli.update_check import extra_install_command
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +48,7 @@ def test_resolve_patchright_missing_raises_typed_exit_24(monkeypatch: pytest.Mon
     monkeypatch.setitem(sys.modules, "patchright.async_api", None)
     with pytest.raises(BrowserEngineUnavailableError) as excinfo:
         _engine.resolve_async_playwright(BrowserEngine.PATCHRIGHT)
-    assert "pip install 'gflow-cli[patchright]'" in (excinfo.value.remediation_hint or "")
+    assert extra_install_command("patchright") in (excinfo.value.remediation_hint or "")
     assert EXIT_CODE_MAP[BrowserEngineUnavailableError] == 24
 
 

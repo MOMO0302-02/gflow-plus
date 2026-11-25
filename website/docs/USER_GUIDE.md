@@ -43,10 +43,10 @@ Pick one — they're equivalent for getting `gflow` on your `PATH`:
 
 ```bash
 # Zero-install (try before committing):
-uvx --from gflow-cli gflow --help
+uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 gflow --help
 
 # Install as a user tool (recommended for regular use):
-uv tool install gflow-cli
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 Both install `gflow` (and a `flow` alias) globally for your user. To upgrade gflow-plus later,
@@ -57,9 +57,9 @@ reinstall it from GitHub — see [USAGE § Upgrading](USAGE.md#upgrading).
 Playwright needs a Chromium binary. Run once after installation:
 
 ```bash
-uv tool run --from gflow-cli playwright install chromium
+uv tool run --from "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" playwright install chromium
 # or via uvx:
-uvx --from gflow-cli playwright install chromium
+uvx --from git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0 playwright install chromium
 ```
 
 This is a ~150 MB download. It happens once per user.
@@ -938,8 +938,8 @@ a bucket instead of the local output directory.
 ### 15.1 Install the storage extra
 
 ```bash
-uv tool install --force "gflow-cli[s3]"   # S3 or MinIO
-uv tool install --force "gflow-cli[gcs]"  # Google Cloud Storage
+uv tool install --force "gflow-plus[s3] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"   # S3 or MinIO
+uv tool install --force "gflow-plus[gcs] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"  # Google Cloud Storage
 ```
 
 ### 15.2 Configure the target

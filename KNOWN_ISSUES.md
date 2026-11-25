@@ -337,8 +337,9 @@ on the first try.
 
 **Workaround:** install from a local checkout with the lock carried explicitly —
 `uv tool install --force --with playwright==1.59.0 .` — and check what you have
-with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
-Installs from PyPI are unaffected.
+with `uv tool run --from gflow-plus python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
+An install from a GitHub release tag resolves from the same upper-bounded ranges; add the same
+`--with playwright==…` pin to carry the locked version.
 
 ### Google's cookie-consent bar covers the composer on the migrated host — fixed in 0.73.1
 

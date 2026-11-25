@@ -114,8 +114,8 @@ default image/video key layout. See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 **Requires:** install the matching optional extra:
 
 ```bash
-uv tool install "gflow-cli[gcs]"
-uv tool install "gflow-cli[s3]"
+uv tool install "gflow-plus[gcs] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+uv tool install "gflow-plus[s3] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 When set, `gflow-cli` uploads generated assets to the cloud prefix instead of
@@ -219,7 +219,7 @@ what a keyless local gateway expects.
 **Security:** this key is separate from `GFLOW_CLI_LLM_API_KEY`; neither setting is used as a
 fallback for the other. Narration text is sent to Google's Gemini TTS endpoint.
 
-The default Edge provider is keyless and requires the optional `gflow-cli[tts]` extra. It uses
+The default Edge provider is keyless and requires the optional `gflow-plus[tts]` extra. It uses
 Microsoft's unofficial consumer Read Aloud endpoint, which has no SLA and may change. The
 `edge-tts` optional dependency carries LGPL/GPL license terms; use Gemini if those terms or the
 endpoint's availability are unsuitable.
@@ -518,7 +518,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Values:** `playwright` | `patchright`
 **Default:** `playwright`
 **What `patchright` is:** an opt-in, drop-in patched Playwright (Chromium) that runs page evaluations in an isolated execution context to avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. It is **not** a headless unlock — Google still detects headless Chromium regardless of engine.
-**Install:** `pip install 'gflow-cli[patchright]'` (or `pip install patchright==1.64.4`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
+**Install:** `pip install "gflow-plus[patchright] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"` (or `pip install patchright==1.64.4`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
 **Version:** use patchright `1.64.4` (the extra's pin). patchright `1.61.2` resolves `locator.last` to nothing, which makes every flow.google.com generation fail with exit 23 "0 option groups rendered" (#1319). Use gflow 0.101.2 or later with it: on 0.101.1, patchright 1.64.4 waits out the 30 s close timeout on every run and then force-closes the profile (#1324). To upgrade, reinstall gflow-plus with the extra named in the spec (`"gflow-plus[patchright] @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"`, see [USAGE § Upgrading](USAGE.md#upgrading)), then check `pip show patchright`.
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
 **Security note:** the `patchright` extra ships a *patched Chromium driver* that handles your live Google session cookies; it is exact-pinned and treated as a security-review-required dependency. See [SECURITY.md § Dependencies](SECURITY.md).
@@ -681,8 +681,8 @@ The last-frame extractor needs the **`chain` optional extra** (PyAV for decoding
 no system ffmpeg required — plus Pillow to write the seed JPEG):
 
 ```bash
-pip install 'gflow-cli[chain]'
-# or:  uv tool install 'gflow-cli[chain]'
+pip install "gflow-plus[chain] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
+# or:  uv tool install "gflow-plus[chain] @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 Per-call local output flags are not intended as bucket-prefix controls. For

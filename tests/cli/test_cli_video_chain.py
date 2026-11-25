@@ -680,7 +680,7 @@ def _break_chain_dependency(monkeypatch: pytest.MonkeyPatch, dep: str) -> None:
 def _assert_names_the_chain_extra(text: str) -> None:
     """The remediation must name the extra and its required packages."""
     flat = _plain(text)
-    assert "gflow-cli[chain]" in flat, f"remediation must name the extra: {flat!r}"
+    assert "gflow-plus[chain]" in flat, f"remediation must name the extra: {flat!r}"
     assert re.search(r"\bav\b", flat, re.IGNORECASE), f"remediation must name av: {flat!r}"
     assert "pillow" in flat.lower(), f"remediation must name pillow: {flat!r}"
 

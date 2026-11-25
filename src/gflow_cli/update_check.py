@@ -19,6 +19,11 @@ DIST_NAME = "gflow-plus"
 REPO_URL = "https://github.com/MOMO0302-02/gflow-plus"
 
 
+def extra_install_command(extra: str) -> str:
+    """``uv pip install`` of this release with ``extra``, from GitHub (never upstream PyPI)."""
+    return f'uv pip install "{DIST_NAME}[{extra}] @ git+{REPO_URL}@v{__version__}"'
+
+
 def _installed_from_index() -> bool:
     """True only for an index-installed wheel. PEP 610: index installs write no
     ``direct_url.json``; a GitHub, local-path or editable install always has one, and a

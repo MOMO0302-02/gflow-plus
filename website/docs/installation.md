@@ -10,7 +10,7 @@
 ## Install the CLI
 
 ```bash
-uv tool install gflow-cli
+uv tool install "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0"
 ```
 
 This puts `gflow` on your `PATH`. Verify:
@@ -24,7 +24,7 @@ gflow --version
 gflow-cli drives Flow through a real Chrome session managed by Playwright. Install Chromium once:
 
 ```bash
-uv tool run --from gflow-cli playwright install chromium
+uv tool run --from "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@v1.0.0" playwright install chromium
 ```
 
 !!! note "Why a browser at all?"

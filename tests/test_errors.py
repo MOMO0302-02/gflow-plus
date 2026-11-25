@@ -33,6 +33,7 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
+from gflow_cli.update_check import extra_install_command
 
 # ---------- parametrized to_problem_details() round-trip table ----------
 
@@ -724,9 +725,9 @@ def test_specific_remediation_hints() -> None:
     # a required package was told to check the one dependency they already had.
     assert (
         FrameExtractionError().remediation_hint
-        == "Verify input video file is readable and non-corrupt. Ensure the gflow-cli[chain] "
+        == "Verify input video file is readable and non-corrupt. Ensure the gflow-plus[chain] "
         "extra and its packages (av, pillow) are installed: "
-        "pip install 'gflow-cli[chain]'"
+        f"{extra_install_command('chain')}"
     )
     # #493: the hint must name the artifacts drift sites actually write (the
     # mode-switch probe produces a diagnostics JSON, not a screenshot) — exact

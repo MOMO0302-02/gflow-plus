@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
 
+from gflow_cli.update_check import extra_install_command
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -720,13 +722,11 @@ class ProfileEngineDowngradeError(ConfigurationError):
 class BrowserEngineUnavailableError(ConfigurationError):
     """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
 
-    Two causes: the optional ``patchright`` package is not installed, or its
-    browser driver is missing. Caught at the engine-resolver seam and re-raised
-    here (never a raw ``ImportError``, which would be SHA-hashed to a generic
-    exit 1). Distinct exit code 24 (not ConfigurationError's 11) so scripted
-    callers can branch on "install the engine" versus a generic config mistake.
-    The remediation hint differs per cause and is supplied at the raise site.
-    """
+    Two causes: the optional ``patchright`` package is not installed, or its browser driver is
+    missing. Caught at the engine-resolver seam and re-raised here (never a raw ``ImportError``,
+    which would be SHA-hashed to a generic exit 1). Distinct exit code 24 (not
+    ConfigurationError's 11) so scripted callers can branch on "install the engine" versus a generic
+    config mistake. The remediation hint differs per cause and is supplied at the raise site."""
 
     problem_type = "https://gflow-cli.dev/errors/browser-engine-unavailable"
     charged = "no"
@@ -734,7 +734,7 @@ class BrowserEngineUnavailableError(ConfigurationError):
     title = "Selected browser engine is unavailable"
     _default_remediation = (
         "The selected browser engine is unavailable. Install it with "
-        "`pip install 'gflow-cli[patchright]'`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
+        f"`{extra_install_command('patchright')}`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
         "default playwright engine."
     )
 
@@ -1659,8 +1659,8 @@ class FrameExtractionError(GFlowError):
     title = "Last-frame extraction failed"
     _default_remediation = (
         "Verify input video file is readable and non-corrupt. Ensure the "
-        "gflow-cli[chain] extra and its packages (av, pillow) are "
-        "installed: pip install 'gflow-cli[chain]'"
+        "gflow-plus[chain] extra and its packages (av, pillow) are "
+        f"installed: {extra_install_command('chain')}"
     )
 
 

@@ -128,7 +128,7 @@ def test_missing_chain_extra_fails_before_transcription(monkeypatch: pytest.Monk
         transcribe_video("clip.mp4")
     assert caught.value.charged == "no"
     assert caught.value.resolved_next_action() == "fix_input"
-    assert "gflow-cli[chain]" in caught.value.detail
+    assert "gflow-plus[chain] @ git+https://github.com/" in caught.value.detail
     with pytest.raises(FrameExtractionError):
         caption_video("clip.mp4", srt_path=Path("captions.srt"))
 

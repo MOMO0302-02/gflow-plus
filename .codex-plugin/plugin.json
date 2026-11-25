@@ -6,8 +6,8 @@
     "name": "Flavio Oliva",
     "url": "https://github.com/ffroliva"
   },
-  "homepage": "https://github.com/ffroliva/gflow-cli",
-  "repository": "https://github.com/ffroliva/gflow-cli",
+  "homepage": "https://github.com/MOMO0302-02/gflow-plus",
+  "repository": "https://github.com/MOMO0302-02/gflow-plus",
   "license": "MIT",
   "keywords": [
     "gflow-cli",
@@ -25,7 +25,7 @@
       "Interactive",
       "Write"
     ],
-    "websiteURL": "https://github.com/ffroliva/gflow-cli",
+    "websiteURL": "https://github.com/MOMO0302-02/gflow-plus",
     "defaultPrompt": [
       "Show the current gflow-cli task with $gflow:status.",
       "Run the gflow-cli quality gates with $gflow:check."
