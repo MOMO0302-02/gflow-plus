@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-26
+
 ### gflow-plus
 
 - **Post-upgrade logged-in account sync (`gflow plus sync` / `gflow_plus_sync_accounts`)**: automatically discovers authenticated profiles in the OS default home (or explicit `--from-home` directories), safely copies missing or broken profiles without transient Chrome lock files while skipping busy/leased targets, preserves `default_profile` and cached balances (without carrying stale cooldowns), prunes orphaned `plus_state.db` rows for removed profiles, and optionally refreshes balances/session health (with `--dry-run` preview and `--overwrite-newer` opt-in).
