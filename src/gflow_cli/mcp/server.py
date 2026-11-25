@@ -150,12 +150,13 @@ def _configure_utf8_pipes() -> None:
 # ---------------------------------------------------------------------------
 
 
-# Credit-spending tools gated by --no-spend (#496). BOTH generate tools:
-# image generation is only *empirically* free ("~0 credits observed") and
-# no-spend must be a hard guarantee, so anything not contractually free is in.
+# Credit-spending tools gated by --no-spend (#496). Anything not contractually
+# free is in: image generation is only *empirically* free, and video upscale
+# spends credits for 4K Ultra exports.
 _SPEND_TOOLS = (
     "gflow_generate_image",
     "gflow_generate_video",
+    "gflow_upscale_video",
     "gflow_plus_submit_image",
     "gflow_plus_submit_video",
     "gflow_plus_submit_batch",
