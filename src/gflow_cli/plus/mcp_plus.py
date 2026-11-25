@@ -24,6 +24,9 @@ PLUS_SPEND_TOOLS: tuple[str, ...] = (
     "gflow_plus_submit_image",
     "gflow_plus_submit_video",
     "gflow_plus_submit_batch",
+    "gflow_plus_submit_upscale",
+    "gflow_plus_submit_extend",
+    "gflow_plus_retry_job",
 )
 
 _ImageAspect = Annotated[
@@ -309,11 +312,13 @@ async def gflow_plus_submit_video(
 @server.tool(
     name="gflow_plus_submit_batch",
     description=(
-        "Submit a list of image/video shots to run concurrently across all healthy accounts "
-        "(1 lane per account, automatic stagger, Windows taskbar hidden, skips already-built "
-        "output files). Returns batch_id immediately; poll with gflow_plus_wait_jobs. Each "
-        "item's out_file / out_dir must resolve inside the configured output directory "
-        "(GFLOW_CLI_OUTPUT_DIR); one that does not refuses the whole batch."
+        "Submit a list or dependency DAG of image/video/upscale/extend items to run across all "
+        "healthy accounts (1 lane per account, warm browser reuse, Windows taskbar hidden, "
+        "skips already-built output files). Items can chain from earlier items via "
+        "'job:<label>' in start_image, end_image, ref_paths, reference_images, or media_id "
+        "(e.g. generate keyframe -> auto upscale 2k or auto i2v video) and explicit depends_on. "
+        "Returns batch_id immediately; poll with gflow_plus_wait_jobs. Each item's out_file / "
+        "out_dir must resolve inside the configured output directory (GFLOW_CLI_OUTPUT_DIR)."
     ),
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]
@@ -322,10 +327,11 @@ async def gflow_plus_submit_batch(
         list[dict[str, Any]],
         Field(
             description=(
-                'Shots to run. Each is {"kind": "image"|"video", "prompt": ..., plus any '
-                "argument of gflow_plus_submit_image or gflow_plus_submit_video}, e.g. "
-                '{"kind": "video", "prompt": "...", "start_image": "D:/a.png", '
-                '"out_file": "D:/out/01.mp4"}.'
+                'Items to run. Each is {"kind": "image"|"video"|"upscale_image"|"upscale_video"|'
+                '"upscale"|"extend_video", ...}. Reference earlier items via "job:<label>" in '
+                "start_image/end_image/ref_paths/reference_images/media_id, e.g. "
+                '[{"kind":"image","label":"kf1","prompt":"..."}, '
+                '{"kind":"video","label":"v1","prompt":"...","start_image":"job:kf1"}].'
             )
         ),
     ],
@@ -333,17 +339,20 @@ async def gflow_plus_submit_batch(
     batch_id: Annotated[str | None, Field(description="Your own id for the batch.")] = None,
     skip_if_exists: _SkipIfExists = True,
 ) -> dict[str, Any]:
-    """Submit a batch of generation items into the multi-account pool."""
+    """Submit a batch (or dependency DAG) of items into the multi-account pool."""
     confined_items = [dict(item) for item in items]
     for index, item in enumerate(confined_items, start=1):
         if (refused := _confine_outputs(item)) is not None:
             refused["error"]["detail"] = f"items[{index}]: {refused['error']['detail']}"
             return refused
-    result = await _pool().submit_batch(
-        confined_items,
-        batch_id=batch_id,
-        skip_if_exists=skip_if_exists,
-    )
+    try:
+        result = await _pool().submit_batch(
+            confined_items,
+            batch_id=batch_id,
+            skip_if_exists=skip_if_exists,
+        )
+    except ValueError as exc:
+        return common._bad_param("Invalid Batch Workflow", str(exc))  # pyright: ignore[reportPrivateUsage]
     return {"status": "ok", **result}
 
 
@@ -351,7 +360,9 @@ async def gflow_plus_submit_batch(
     name="gflow_plus_job_status",
     description=(
         "Inspect one job_id, one batch_id, or recent pool jobs with delivery ledger "
-        "(local output_paths, profile, model, aspect, duration, media_id)."
+        "(local output_paths, profile, model, aspect, duration, media_id). "
+        "List/batch queries return compact records by default; pass verbose=true for full "
+        "attempt histories."
     ),
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]
@@ -361,6 +372,10 @@ async def gflow_plus_job_status(
     batch_id: str | None = None,
     job_status: JobStatus | None = None,
     limit: int = 20,
+    verbose: Annotated[
+        bool,
+        Field(description="Include full attempt logs and timestamps on batch/list queries."),
+    ] = False,
 ) -> dict[str, Any]:
     """Query status of one job, a whole batch, or recent jobs."""
     manager = _pool()
@@ -370,9 +385,14 @@ async def gflow_plus_job_status(
             return {"status": "error", "error": f"Unknown job_id: {job_id}"}
         return {"status": "ok", "job": job.to_public_dict()}
     if batch_id:
-        return {"status": "ok", **manager.batch_summary(batch_id)}
+        summary = manager.batch_summary(batch_id)
+        if not verbose:
+            jobs_list = manager.list_jobs(batch_id=batch_id, limit=500)
+            summary["jobs"] = [j.to_brief_dict() for j in jobs_list]
+        return {"status": "ok", **summary}
     jobs = manager.list_jobs(status=job_status, limit=limit)
-    return {"status": "ok", "count": len(jobs), "jobs": [j.to_public_dict() for j in jobs]}
+    serialized = [j.to_public_dict() if verbose else j.to_brief_dict() for j in jobs]
+    return {"status": "ok", "count": len(jobs), "jobs": serialized}
 
 
 @server.tool(

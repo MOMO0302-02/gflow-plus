@@ -12,7 +12,7 @@ from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gflow_cli.plus.pool.models import JobKind, JobStatus, PoolJob
 
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS plus_jobs (
     error_json TEXT,
     may_have_spent INTEGER NOT NULL DEFAULT 0,
     attempts_json TEXT NOT NULL DEFAULT '[]',
+    depends_on_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     owner TEXT
@@ -45,7 +46,8 @@ CREATE TABLE IF NOT EXISTS plus_account_state (
     cooldown_until REAL,
     cooldown_reason TEXT,
     last_error TEXT,
-    last_used_at REAL
+    last_used_at REAL,
+    disabled INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -83,6 +85,15 @@ class PlusStateStore:
             columns = {r["name"] for r in con.execute("PRAGMA table_info(plus_jobs)")}
             if "owner" not in columns:
                 con.execute("ALTER TABLE plus_jobs ADD COLUMN owner TEXT")
+            if "depends_on_json" not in columns:
+                con.execute(
+                    "ALTER TABLE plus_jobs ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            acc_cols = {r["name"] for r in con.execute("PRAGMA table_info(plus_account_state)")}
+            if "disabled" not in acc_cols:
+                con.execute(
+                    "ALTER TABLE plus_account_state ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"
+                )
 
     @property
     def db_path(self) -> Path:
@@ -116,16 +127,18 @@ class PlusStateStore:
         last_error: str | None = None,
         last_used_at: float | None = None,
         clear_cooldown: bool = False,
+        disabled: bool | None = None,
     ) -> None:
         # One statement, so an update never reads a row another process is about to change:
         # a field left as None keeps the stored value; clear_cooldown nulls both cooldown fields.
+        disabled_val = None if disabled is None else (1 if disabled else 0)
         with self._connect() as con:
             con.execute(
                 """
                 INSERT INTO plus_account_state (
                     profile, credits, credits_checked_at, cooldown_until,
-                    cooldown_reason, last_error, last_used_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    cooldown_reason, last_error, last_used_at, disabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))
                 ON CONFLICT(profile) DO UPDATE SET
                     credits = COALESCE(excluded.credits, credits),
                     credits_checked_at = COALESCE(excluded.credits_checked_at, credits_checked_at),
@@ -134,7 +147,8 @@ class PlusStateStore:
                     cooldown_reason = CASE WHEN ? THEN NULL
                         ELSE COALESCE(excluded.cooldown_reason, cooldown_reason) END,
                     last_error = COALESCE(excluded.last_error, last_error),
-                    last_used_at = COALESCE(excluded.last_used_at, last_used_at)
+                    last_used_at = COALESCE(excluded.last_used_at, last_used_at),
+                    disabled = COALESCE(?, disabled)
                 """,
                 (
                     profile,
@@ -144,10 +158,21 @@ class PlusStateStore:
                     None if clear_cooldown else cooldown_reason,
                     last_error,
                     last_used_at,
+                    disabled_val,
                     clear_cooldown,
                     clear_cooldown,
+                    disabled_val,
                 ),
             )
+
+    def clear_all_cooldowns(self) -> int:
+        """Clear cooldowns across every stored profile in one SQL statement."""
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE plus_account_state SET cooldown_until = NULL, cooldown_reason = NULL "
+                "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
+            )
+            return cur.rowcount
 
     # --- Jobs ---------------------------------------------------------------
 
@@ -162,8 +187,8 @@ class PlusStateStore:
                     job_id, batch_id, label, kind, task_type, status,
                     preferred_profile, assigned_profile, payload_json,
                     result_json, error_json, may_have_spent, attempts_json,
-                    created_at, updated_at, owner
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    depends_on_json, created_at, updated_at, owner
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.job_id,
@@ -179,6 +204,7 @@ class PlusStateStore:
                     json.dumps(job.error, ensure_ascii=False) if job.error is not None else None,
                     1 if job.may_have_spent else 0,
                     json.dumps(job.attempts, ensure_ascii=False),
+                    json.dumps(job.depends_on, ensure_ascii=False),
                     job.created_at,
                     job.updated_at,
                     job.owner,
@@ -193,22 +219,28 @@ class PlusStateStore:
                 """
                 UPDATE plus_jobs SET
                     status = ?,
+                    preferred_profile = ?,
                     assigned_profile = ?,
+                    payload_json = ?,
                     result_json = ?,
                     error_json = ?,
                     may_have_spent = ?,
                     attempts_json = ?,
+                    depends_on_json = ?,
                     updated_at = ?,
                     owner = ?
                 WHERE job_id = ?
                 """,
                 (
                     job.status,
+                    job.preferred_profile,
                     job.assigned_profile,
+                    json.dumps(job.payload, ensure_ascii=False),
                     json.dumps(job.result, ensure_ascii=False) if job.result is not None else None,
                     json.dumps(job.error, ensure_ascii=False) if job.error is not None else None,
                     1 if job.may_have_spent else 0,
                     json.dumps(job.attempts, ensure_ascii=False),
+                    json.dumps(job.depends_on, ensure_ascii=False),
                     job.updated_at,
                     job.owner,
                     job.job_id,
@@ -273,9 +305,14 @@ class PlusStateStore:
         return [_row_to_job(r) for r in rows]
 
 
+_VALID_KINDS: frozenset[str] = frozenset({"image", "video", "upscale", "extend"})
+
+
 def _row_to_job(row: sqlite3.Row) -> PoolJob:
-    kind: JobKind = "image" if row["kind"] == "image" else "video"
+    raw_kind = str(row["kind"])
+    kind: JobKind = cast("JobKind", raw_kind) if raw_kind in _VALID_KINDS else "video"
     status: JobStatus = row["status"]
+    raw_deps = row["depends_on_json"] if "depends_on_json" in row.keys() else None
     return PoolJob(
         job_id=str(row["job_id"]),
         batch_id=row["batch_id"],
@@ -290,6 +327,7 @@ def _row_to_job(row: sqlite3.Row) -> PoolJob:
         error=json.loads(row["error_json"]) if row["error_json"] else None,
         may_have_spent=bool(row["may_have_spent"]),
         attempts=json.loads(row["attempts_json"]) if row["attempts_json"] else [],
+        depends_on=json.loads(raw_deps) if raw_deps else [],
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         owner=row["owner"],

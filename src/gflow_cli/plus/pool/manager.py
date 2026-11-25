@@ -12,7 +12,7 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -21,12 +21,21 @@ from gflow_cli.plus.pool.executor import (
     check_existing_output,
     execute_via_worker,
     ledger_duration,
+    lookup_media_owner,
     validate_payload,
 )
 from gflow_cli.plus.pool.models import AttemptRecord, ExecutionOutcome, JobKind, JobStatus, PoolJob
 from gflow_cli.plus.pool.owner import OwnerRegistry
 from gflow_cli.plus.pool.scheduler import AccountPoolScheduler
 from gflow_cli.plus.pool.state_store import PlusStateStore, utc_now_iso
+from gflow_cli.plus.pool.workflows import (
+    extract_ref_tokens,
+    is_job_ref,
+    materialize_payload,
+    parse_batch_item,
+    rewrite_payload_refs,
+    validate_no_cycles,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -83,47 +92,62 @@ class PoolJobManager:
         batch_id: str | None = None,
         label: str | None = None,
         preferred_profile: str | None = None,
+        depends_on: Sequence[str] = (),
         skip_if_exists: bool = True,
         start_background: bool = True,
+        job_id: str | None = None,
     ) -> PoolJob:
         """Validate, persist, and immediately launch one background generation job."""
-        normalized = validate_payload(task_type, payload)
-        job_id = f"job-{uuid.uuid4().hex[:10]}"
+        deps = list(dict.fromkeys(depends_on))
+        normalized = validate_payload(task_type, payload, allow_job_refs=bool(deps))
+        resolved_profile = preferred_profile
+        if kind in ("upscale", "extend") and not resolved_profile:
+            raw_mid = str(normalized.get("media_id") or "")
+            if raw_mid and not is_job_ref(raw_mid):
+                owner_profile, owner_project = lookup_media_owner(raw_mid)
+                if owner_profile:
+                    resolved_profile = owner_profile
+                if owner_project and not normalized.get("project_id"):
+                    normalized["project_id"] = owner_project
 
-        existing = check_existing_output(normalized) if skip_if_exists else None
+        resolved_job_id = job_id or f"job-{uuid.uuid4().hex[:10]}"
+
+        existing = check_existing_output(normalized) if (skip_if_exists and not deps) else None
         if existing is not None:
-            profile = preferred_profile or "cached"
+            profile = resolved_profile or "cached"
             job = PoolJob(
-                job_id=job_id,
+                job_id=resolved_job_id,
                 batch_id=batch_id,
                 label=label,
                 kind=kind,
                 task_type=task_type,
                 status="succeeded",
-                preferred_profile=preferred_profile,
+                preferred_profile=resolved_profile,
                 assigned_profile=profile,
                 payload=normalized,
                 result=_skipped_ledger(normalized, profile, existing),
+                depends_on=deps,
                 owner=self._owners.owner_id,
             )
             self._store.create_job(job)
             return job
 
         job = PoolJob(
-            job_id=job_id,
+            job_id=resolved_job_id,
             batch_id=batch_id,
             label=label,
             kind=kind,
             task_type=task_type,
             status="queued",
-            preferred_profile=preferred_profile,
+            preferred_profile=resolved_profile,
             payload=normalized,
+            depends_on=deps,
             owner=self._owners.owner_id,
         )
         self._store.create_job(job)
 
         if start_background:
-            self._start(job_id)
+            self._start(resolved_job_id)
         return job
 
     def _start(self, job_id: str) -> None:
@@ -202,21 +226,27 @@ class PoolJobManager:
         batch_id: str | None = None,
         skip_if_exists: bool = True,
     ) -> dict[str, Any]:
-        """Submit a batch of image/video items to run in parallel across all healthy lanes."""
+        """Submit a batch (or dependency DAG) of items across all healthy lanes."""
         resolved_batch = batch_id or f"batch-{uuid.uuid4().hex[:8]}"
+        prepared = self._prepare_batch_items(items, skip_if_exists=skip_if_exists)
         jobs: list[PoolJob] = []
-        for idx, item in enumerate(items, start=1):
-            kind, task_type, payload = _parse_batch_item(item)
+        for entry in prepared:
             job = await self.submit_job(
-                kind=kind,
-                task_type=task_type,
-                payload=payload,
+                job_id=entry["job_id"],
+                kind=entry["kind"],
+                task_type=entry["task_type"],
+                payload=entry["payload"],
                 batch_id=resolved_batch,
-                label=str(item.get("label") or f"item-{idx:02d}"),
-                preferred_profile=item.get("profile"),
-                skip_if_exists=bool(item.get("skip_if_exists", skip_if_exists)),
+                label=entry["label"],
+                preferred_profile=entry["profile"],
+                depends_on=entry["depends_on"],
+                skip_if_exists=entry["skip_if_exists"],
+                start_background=False,
             )
             jobs.append(job)
+        for job in jobs:
+            if job.status == "queued":
+                self._start(job.job_id)
         return {
             "batch_id": resolved_batch,
             "total": len(jobs),
@@ -224,6 +254,69 @@ class PoolJobManager:
             "queued": sum(1 for j in jobs if j.status == "queued"),
             "jobs": [j.to_public_dict() for j in jobs],
         }
+
+    def _prepare_batch_items(
+        self,
+        items: Sequence[dict[str, Any]],
+        *,
+        skip_if_exists: bool,
+    ) -> list[dict[str, Any]]:
+        """Pre-allocate IDs, resolve ``job:<label|index>`` refs, and reject cycles upfront."""
+        allocated_ids: list[str] = [f"job-{uuid.uuid4().hex[:10]}" for _ in items]
+        labels: list[str] = [
+            str(item.get("label") or f"item-{idx:02d}") for idx, item in enumerate(items, start=1)
+        ]
+        label_to_id: dict[str, str] = {}
+        index_to_id: dict[str, str] = {}
+        for idx, (jid, lbl) in enumerate(zip(allocated_ids, labels, strict=True), start=1):
+            label_to_id[lbl] = jid
+            index_to_id[str(idx)] = jid
+
+        def _resolve_token(tok: str) -> str:
+            if tok in label_to_id:
+                return label_to_id[tok]
+            if tok in index_to_id:
+                return index_to_id[tok]
+            if self._store.get_job(tok) is not None:
+                return tok
+            raise ValueError(f"Unknown upstream job reference: {tok!r}")
+
+        kind_by_id: dict[str, JobKind] = {}
+        prepared: list[dict[str, Any]] = []
+        edges: dict[str, list[str]] = {}
+        for idx, item in enumerate(items):
+            jid = allocated_ids[idx]
+            raw_media = item.get("media_id")
+            upstream_kind: JobKind | None = None
+            if is_job_ref(raw_media):
+                ref_id = _resolve_token(str(raw_media)[4:].strip())
+                upstream_kind = kind_by_id.get(ref_id)
+            kind, task_type, payload = parse_batch_item(item, upstream_kind=upstream_kind)
+            kind_by_id[jid] = kind
+            raw_deps = item.get("depends_on")
+            explicit: list[str] = (
+                [str(d) for d in cast("list[object]", raw_deps)]
+                if isinstance(raw_deps, list)
+                else ([str(raw_deps)] if raw_deps else [])
+            )
+            dep_tokens = extract_ref_tokens(payload, explicit)
+            dep_ids = [_resolve_token(tok) for tok in dep_tokens]
+            rewritten = rewrite_payload_refs(payload, _resolve_token)
+            edges[jid] = dep_ids
+            prepared.append(
+                {
+                    "job_id": jid,
+                    "label": labels[idx],
+                    "kind": kind,
+                    "task_type": task_type,
+                    "payload": rewritten,
+                    "profile": item.get("profile"),
+                    "depends_on": dep_ids,
+                    "skip_if_exists": bool(item.get("skip_if_exists", skip_if_exists)),
+                }
+            )
+        validate_no_cycles(edges)
+        return prepared
 
     def get_job(self, job_id: str) -> PoolJob | None:
         return self._store.get_job(job_id)
@@ -309,17 +402,142 @@ class PoolJobManager:
             "note": "Job is already running; local cancel cannot stop Flow once submitted.",
         }
 
+    async def retry_jobs(
+        self,
+        *,
+        job_id: str | None = None,
+        batch_id: str | None = None,
+        force_spent: bool = False,
+        preferred_profile: str | None = None,
+    ) -> dict[str, Any]:
+        """Re-submit one failed/cancelled job or all failed/cancelled jobs in a batch.
+
+        Hard credit-safety invariant: jobs with ``may_have_spent=True`` or status
+        ``indeterminate`` are skipped unless ``force_spent=True`` is explicitly set.
+        """
+        targets: list[PoolJob] = []
+        if job_id:
+            found = self._store.get_job(job_id)
+            if found is None:
+                return {"status": "error", "error": f"Unknown job_id: {job_id}"}
+            targets = [found]
+        elif batch_id:
+            targets = [
+                j
+                for j in self._store.list_jobs(batch_id=batch_id, limit=500)
+                if j.status in ("failed", "cancelled", "indeterminate")
+            ]
+        else:
+            return {"status": "error", "error": "Provide job_id or batch_id to retry."}
+
+        retried: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        for orig in targets:
+            if orig.status not in ("failed", "cancelled", "indeterminate"):
+                skipped.append(
+                    {"job_id": orig.job_id, "reason": f"status is {orig.status}, not retryable"}
+                )
+                continue
+            if (orig.may_have_spent or orig.status == "indeterminate") and not force_spent:
+                skipped.append(
+                    {
+                        "job_id": orig.job_id,
+                        "reason": (
+                            "may_have_spent is true; check Flow / gflow_plus_list_media first, "
+                            "or pass force_spent=True to confirm re-submission"
+                        ),
+                    }
+                )
+                continue
+            new_job = await self.submit_job(
+                kind=orig.kind,
+                task_type=orig.task_type,
+                payload=dict(orig.payload),
+                batch_id=orig.batch_id,
+                label=orig.label,
+                preferred_profile=preferred_profile or orig.preferred_profile,
+                depends_on=orig.depends_on,
+                skip_if_exists=True,
+            )
+            retried.append({"original_job_id": orig.job_id, "new_job": new_job.to_brief_dict()})
+        return {
+            "status": "ok",
+            "retried_count": len(retried),
+            "skipped_count": len(skipped),
+            "retried": retried,
+            "skipped": skipped,
+        }
+
     def _is_cancelled(self, job_id: str) -> bool:
         current = self._store.get_job(job_id)
         return current is not None and current.status == "cancelled"
+
+    async def _wait_dependencies(self, job: PoolJob) -> dict[str, PoolJob] | None:
+        """Wait for all upstream dependencies; fail this job immediately if any fails."""
+        while True:
+            if self._is_cancelled(job.job_id):
+                return None
+            deps = {d.job_id: d for d in self._store.get_jobs(job.depends_on)}
+            missing = [dep_id for dep_id in job.depends_on if dep_id not in deps]
+            if missing:
+                self._fail_dependency(job, f"Upstream job(s) missing: {missing}")
+                return None
+            broken = [
+                f"{d.label or d.job_id} ({d.status})"
+                for d in deps.values()
+                if d.status in ("failed", "cancelled", "indeterminate")
+            ]
+            if broken:
+                self._fail_dependency(
+                    job, f"Upstream dependency did not succeed: {', '.join(broken)}"
+                )
+                return None
+            if all(d.status == "succeeded" for d in deps.values()):
+                return deps
+            await asyncio.sleep(_JOB_POLL_S)
+
+    def _fail_dependency(self, job: PoolJob, detail: str) -> None:
+        job.status = "failed"
+        job.error = {"type": "dependency-failed", "detail": detail, "charged": "no"}
+        self._store.save_job(job)
+
+    async def _resolve_dependencies_for_run(self, job: PoolJob) -> bool:
+        """Wait for dependencies, materialize placeholders, and handle skip-if-exists.
+
+        Returns True when the job is ready to execute on a lane, False when finished/failed.
+        """
+        deps = await self._wait_dependencies(job)
+        if deps is None:
+            return False
+        try:
+            resolved_payload, inferred_profile = materialize_payload(job, deps)
+            job.payload = validate_payload(job.task_type, resolved_payload)
+            if inferred_profile and not job.preferred_profile:
+                job.preferred_profile = inferred_profile
+        except Exception as exc:  # noqa: BLE001 — surface resolution errors cleanly
+            self._fail_dependency(job, str(exc))
+            return False
+        existing = check_existing_output(job.payload)
+        if existing is not None:
+            profile = job.preferred_profile or "cached"
+            job.status = "succeeded"
+            job.assigned_profile = profile
+            job.result = _skipped_ledger(job.payload, profile, existing)
+            self._store.save_job(job)
+            return False
+        self._store.save_job(job)
+        return True
 
     async def _run_job(self, job_id: str) -> None:
         job = self._store.get_job(job_id)
         if job is None or job.status in _TERMINAL_STATUSES:
             return
+        if job.depends_on and not await self._resolve_dependencies_for_run(job):
+            return
 
         tried: set[str] = set()
-        max_attempts = self._settings.max_failover_attempts
+        pinned = job.kind in ("upscale", "extend")
+        max_attempts = 1 if pinned else self._settings.max_failover_attempts
         required_credits = _required_credits(job)
         if job.kind == "video":
             # Video picks by balance; a balance older than the cache TTL is read again.
@@ -331,6 +549,7 @@ class PoolJobManager:
                 preferred=job.preferred_profile if not tried else None,
                 exclude=frozenset(tried),
                 required_credits=required_credits,
+                pin_preferred=pinned and bool(job.preferred_profile),
             )
             if self._is_cancelled(job_id):
                 return
@@ -340,7 +559,7 @@ class PoolJobManager:
                     "type": "no-healthy-profile",
                     "detail": (
                         "No healthy profile with sufficient credits is available "
-                        f"(tried={sorted(tried)})"
+                        f"(tried={sorted(tried)}, preferred={job.preferred_profile})"
                     ),
                     "charged": "no",
                 }
@@ -358,7 +577,7 @@ class PoolJobManager:
                 self._store.save_job(job)
                 return
 
-            if outcome.charged != "no" or not decision.retry_other_profile:
+            if pinned or outcome.charged != "no" or not decision.retry_other_profile:
                 job.status = "indeterminate" if outcome.status == "indeterminate" else "failed"
                 job.assigned_profile = profile
                 job.may_have_spent = outcome.charged != "no"
@@ -387,6 +606,7 @@ class PoolJobManager:
         preferred: str | None,
         exclude: frozenset[str],
         required_credits: int | None,
+        pin_preferred: bool = False,
     ) -> str | None:
         """Pick an idle healthy profile, queueing for as long as every eligible lane is busy."""
         while True:
@@ -396,6 +616,7 @@ class PoolJobManager:
                 exclude=exclude,
                 required_credits=required_credits,
                 allow_busy=False,
+                pin_preferred=pin_preferred,
             )
             if picked is not None:
                 return picked
@@ -405,6 +626,7 @@ class PoolJobManager:
                 exclude=exclude,
                 required_credits=required_credits,
                 allow_busy=True,
+                pin_preferred=pin_preferred,
             )
             if any_candidate is None:
                 return None
@@ -471,88 +693,10 @@ def _skipped_ledger(payload: dict[str, Any], profile: str, existing: Path) -> di
 
 
 def _required_credits(job: PoolJob) -> int | None:
-    if job.kind != "video":
+    if job.kind not in ("video", "extend"):
         return None
     raw = job.payload.get("max_credits")
     return int(raw) if isinstance(raw, int) else None
-
-
-def _parse_batch_item(item: dict[str, Any]) -> tuple[JobKind, str, dict[str, Any]]:
-    raw_kind = str(item.get("kind") or "").lower()
-    raw_mode = str(item.get("mode") or item.get("task_type") or "").lower()
-    if raw_kind == "image" or raw_mode in ("t2i", "i2i"):
-        has_refs = bool(item.get("ref_paths") or item.get("refs") or item.get("reference_images"))
-        task_type = raw_mode if raw_mode in ("t2i", "i2i") else ("i2i" if has_refs else "t2i")
-        payload = _extract_image_payload(item)
-        return "image", task_type, payload
-    mode = raw_mode if raw_mode in ("t2v", "i2v", "r2v") else _infer_video_mode(item)
-    payload = _extract_video_payload(item, mode)
-    return "video", mode, payload
-
-
-def _infer_video_mode(item: dict[str, Any]) -> str:
-    if item.get("start_image") or item.get("initial_frame"):
-        return "i2v"
-    if item.get("reference_images") or item.get("reference_entities"):
-        return "r2v"
-    return "t2v"
-
-
-def _extract_image_payload(item: dict[str, Any]) -> dict[str, Any]:
-    ref_paths = list(item.get("ref_paths") or item.get("reference_images") or [])
-    payload: dict[str, Any] = {
-        "prompt": item["prompt"],
-        "aspect": item.get("aspect", "9:16"),
-        "model": item.get("model", "nano2"),
-        "count": int(item.get("count", 1)),
-    }
-    if ref_paths:
-        payload["ref_paths"] = ref_paths
-    for key in (
-        "refs",
-        "reference_entities",
-        "reference_entity_names",
-        "project_id",
-        "project_name",
-        "out_dir",
-    ):
-        if item.get(key) is not None:
-            payload[key] = item[key]
-    out_file = item.get("output_file") or item.get("out_file")
-    if out_file:
-        payload["output_file"] = str(out_file)
-    return payload
-
-
-def _extract_video_payload(item: dict[str, Any], mode: str) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "prompt": item["prompt"],
-        "mode": mode,
-        "aspect": item.get("aspect", "9:16"),
-        "model": item.get("model", "omni-1.2-flash"),
-        "count": int(item.get("count", 1)),
-    }
-    start = item.get("start_image") or item.get("initial_frame")
-    if start:
-        payload["start_image"] = str(start)
-    for key in (
-        "end_image",
-        "duration",
-        "max_credits",
-        "reference_images",
-        "reference_entities",
-        "reference_entity_names",
-        "project_id",
-        "project_name",
-        "out_dir",
-        "resolution",
-    ):
-        if item.get(key) is not None:
-            payload[key] = item[key]
-    out_file = item.get("output_file") or item.get("out_file")
-    if out_file:
-        payload["output_file"] = str(out_file)
-    return payload
 
 
 _default_manager: PoolJobManager | None = None

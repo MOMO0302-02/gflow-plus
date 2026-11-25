@@ -21,6 +21,11 @@ EXPECTED_PLUS_TREE = {
     "plus pool status": False,
     "plus pool pick": False,
     "plus pool jobs": False,
+    "plus pool retry": True,
+    "plus pool profile-control": False,
+    "plus media": False,
+    "plus upscale": True,
+    "plus extend": True,
     "plus run-batch": True,
     "plus hide-taskbar": False,
 }

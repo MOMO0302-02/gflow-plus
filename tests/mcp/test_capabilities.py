@@ -116,6 +116,11 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "plus pool status": None,
     "plus pool pick": None,
     "plus pool jobs": None,
+    "plus pool retry": _IMAGE,
+    "plus pool profile-control": None,
+    "plus media": None,
+    "plus upscale": None,
+    "plus extend": _VIDEO,
     "plus run-batch": _IMAGE,
     "plus hide-taskbar": None,
 }

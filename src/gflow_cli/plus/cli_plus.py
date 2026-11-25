@@ -13,6 +13,7 @@ from rich.table import Table
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import spends_credits
+from gflow_cli.plus.mcp_plus_ops import query_cross_account_media
 from gflow_cli.plus.pool.manager import get_pool_manager
 from gflow_cli.plus.pool.models import JobKind, JobStatus
 from gflow_cli.plus.win_stealth import hide_offscreen_chrome_windows
@@ -218,6 +219,268 @@ def plus_run_batch(manifest: Path, skip_if_exists: bool, as_json: bool) -> None:
         f"succeeded={counts['succeeded']} failed={counts['failed']} "
         f"indeterminate={counts['indeterminate']}"
     )
+
+
+@spends_credits(True)
+@pool_group.command("retry")
+@click.option("--job-id", default=None, help="Retry one failed/cancelled job_id.")
+@click.option("--batch-id", default=None, help="Retry all failed/cancelled jobs in a batch_id.")
+@click.option(
+    "--force-spent",
+    is_flag=True,
+    default=False,
+    help="Allow retrying indeterminate/may_have_spent jobs after manual Flow verification.",
+)
+@click.option("--profile", default=None, help="Override target profile for retried jobs.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def pool_retry(
+    job_id: str | None,
+    batch_id: str | None,
+    force_spent: bool,
+    profile: str | None,
+    as_json: bool,
+) -> None:
+    """Re-submit failed or cancelled pool jobs safely."""
+
+    async def _run() -> dict[str, Any]:
+        return await get_pool_manager().retry_jobs(
+            job_id=job_id,
+            batch_id=batch_id,
+            force_spent=force_spent,
+            preferred_profile=profile,
+        )
+
+    result = asyncio.run(_run())
+    if as_json:
+        click.echo(json_output.dumps(result))
+        return
+    if result.get("status") != "ok":
+        console.print(f"[red]{result.get('error')}[/red]")
+        return
+    console.print(f"Retried: {result['retried_count']} | Skipped: {result['skipped_count']}")
+
+
+@spends_credits(False)
+@pool_group.command("profile-control")
+@click.argument(
+    "action",
+    type=click.Choice(["clear_cooldown", "renew", "exclude", "include", "close_browser"]),
+)
+@click.option("--profile", default=None, help="Target profile name (or '*' for all).")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def pool_profile_control(action: str, profile: str | None, as_json: bool) -> None:
+    """Clear cooldowns, renew sessions, toggle account participation, or close warm browsers."""
+
+    async def _run() -> dict[str, Any]:
+        scheduler = get_pool_manager().scheduler
+        if action == "clear_cooldown":
+            return {"status": "ok", "action": action, "cleared": scheduler.clear_cooldown(profile)}
+        if action == "close_browser":
+            closed = await scheduler.close_warm_browsers(profile)
+            return {"status": "ok", "action": action, "closed": closed}
+        if not profile or profile == "*":
+            raise click.BadParameter(f"action={action!r} requires --profile <name>")
+        if action == "exclude":
+            scheduler.set_disabled(profile, disabled=True)
+            await scheduler.close_warm_browsers(profile)
+            return {"status": "ok", "action": action, "profile": profile, "disabled": True}
+        if action == "include":
+            scheduler.set_disabled(profile, disabled=False)
+            return {"status": "ok", "action": action, "profile": profile, "disabled": False}
+        return {"status": "ok", "action": action, "account": await scheduler.renew_profile(profile)}
+
+    result = asyncio.run(_run())
+    if as_json:
+        click.echo(json_output.dumps(result))
+        return
+    console.print(json_output.dumps(result))
+
+
+@spends_credits(False)
+@plus.command("media")
+@click.option(
+    "--kind",
+    type=click.Choice(["all", "image", "video"]),
+    default="all",
+    show_default=True,
+    help="Filter by media type.",
+)
+@click.option("--profile", default=None, help="Filter by profile name (default: all accounts).")
+@click.option("--query", default=None, help="Substring search on prompt, media_id, model, or path.")
+@click.option("--limit", default=20, show_default=True, type=int, help="Max rows to return.")
+@click.option("--offset", default=0, show_default=True, type=int, help="Pagination offset.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def plus_media(
+    kind: str,
+    profile: str | None,
+    query: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+) -> None:
+    """List or search local catalogued assets across all saved Flow accounts."""
+    typed_kind = cast("Any", kind)
+    result = query_cross_account_media(
+        kind=typed_kind, profile=profile, query=query, limit=limit, offset=offset
+    )
+    if as_json:
+        click.echo(json_output.dumps(result))
+        return
+    table = Table(title="gflow plus — Cross-Account Media")
+    table.add_column("Kind")
+    table.add_column("Profile", style="cyan")
+    table.add_column("Media ID")
+    table.add_column("Model")
+    table.add_column("Local Path")
+    for item in result["items"]:
+        table.add_row(
+            str(item["kind"]),
+            str(item["profile"]),
+            str(item["media_id"]),
+            str(item["model"] or "-"),
+            str(item["local_path"] or "-"),
+        )
+    console.print(table)
+
+
+@spends_credits(True)
+@plus.command("upscale")
+@click.argument("media_id")
+@click.option(
+    "--media-kind",
+    type=click.Choice(["image", "video"]),
+    default="image",
+    show_default=True,
+    help="Whether media_id is an image or a video.",
+)
+@click.option("--scale", default=None, help="Target scale (2k/4k image; 1080p/720p/270p/4k video).")
+@click.option(
+    "--project-id", default=None, help="Owning Flow project UUID (auto-resolved if omitted)."
+)
+@click.option("--out-file", default=None, help="Output file path.")
+@click.option("--out-dir", default=None, help="Output directory.")
+@click.option(
+    "--profile", default=None, help="Owning profile (auto-resolved from catalog if omitted)."
+)
+@click.option("--label", default=None, help="Optional job label.")
+@click.option(
+    "--skip-if-exists/--no-skip-if-exists",
+    default=True,
+    show_default=True,
+    help="Skip when out_file already exists.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def plus_upscale(
+    media_id: str,
+    media_kind: str,
+    scale: str | None,
+    project_id: str | None,
+    out_file: str | None,
+    out_dir: str | None,
+    profile: str | None,
+    label: str | None,
+    skip_if_exists: bool,
+    as_json: bool,
+) -> None:
+    """Run an image or video upscale through the owning profile's warm pool lane."""
+    task_type = "upscale_image" if media_kind == "image" else "upscale_video"
+    resolved_scale = (scale or ("2k" if media_kind == "image" else "1080p")).strip().lower()
+    payload: dict[str, Any] = {"media_id": media_id, "scale": resolved_scale}
+    for key, val in (("project_id", project_id), ("output_file", out_file), ("out_dir", out_dir)):
+        if val is not None:
+            payload[key] = val
+
+    async def _run() -> dict[str, Any]:
+        manager = get_pool_manager()
+        job = await manager.submit_job(
+            kind="upscale",
+            task_type=task_type,
+            payload=payload,
+            label=label,
+            preferred_profile=profile,
+            skip_if_exists=skip_if_exists,
+        )
+        while True:
+            state = await manager.wait_jobs(job_ids=[job.job_id], timeout_s=25.0)
+            if state["done"]:
+                final = manager.get_job(job.job_id)
+                return final.to_public_dict() if final is not None else job.to_public_dict()
+
+    done = asyncio.run(_run())
+    if as_json:
+        click.echo(json_output.dumps(done))
+        return
+    console.print(f"Upscale {done['job_id']}: {done['status']}")
+
+
+@spends_credits(True)
+@plus.command("extend")
+@click.argument("media_id")
+@click.argument("prompt")
+@click.option("--aspect", default=None, help="Aspect ratio (9:16 or 16:9).")
+@click.option(
+    "--project-id", default=None, help="Owning Flow project UUID (auto-resolved if omitted)."
+)
+@click.option("--max-credits", default=None, type=int, help="Max credits cap.")
+@click.option("--out-file", default=None, help="Output file path.")
+@click.option("--out-dir", default=None, help="Output directory.")
+@click.option(
+    "--profile", default=None, help="Owning profile (auto-resolved from catalog if omitted)."
+)
+@click.option("--label", default=None, help="Optional job label.")
+@click.option(
+    "--skip-if-exists/--no-skip-if-exists",
+    default=True,
+    show_default=True,
+    help="Skip when out_file already exists.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
+def plus_extend(
+    media_id: str,
+    prompt: str,
+    aspect: str | None,
+    project_id: str | None,
+    max_credits: int | None,
+    out_file: str | None,
+    out_dir: str | None,
+    profile: str | None,
+    label: str | None,
+    skip_if_exists: bool,
+    as_json: bool,
+) -> None:
+    """Run a single-segment video extend through the owning profile's warm pool lane."""
+    payload: dict[str, Any] = {"media_id": media_id, "prompt": prompt}
+    for key, val in (
+        ("aspect", aspect),
+        ("project_id", project_id),
+        ("max_credits", max_credits),
+        ("output_file", out_file),
+        ("out_dir", out_dir),
+    ):
+        if val is not None:
+            payload[key] = val
+
+    async def _run() -> dict[str, Any]:
+        manager = get_pool_manager()
+        job = await manager.submit_job(
+            kind="extend",
+            task_type="extend_video",
+            payload=payload,
+            label=label,
+            preferred_profile=profile,
+            skip_if_exists=skip_if_exists,
+        )
+        while True:
+            state = await manager.wait_jobs(job_ids=[job.job_id], timeout_s=25.0)
+            if state["done"]:
+                final = manager.get_job(job.job_id)
+                return final.to_public_dict() if final is not None else job.to_public_dict()
+
+    done = asyncio.run(_run())
+    if as_json:
+        click.echo(json_output.dumps(done))
+        return
+    console.print(f"Extend {done['job_id']}: {done['status']}")
 
 
 @spends_credits(False)

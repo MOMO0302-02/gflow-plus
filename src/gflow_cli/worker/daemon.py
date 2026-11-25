@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -73,12 +74,24 @@ async def run_counted(job: Awaitable[None]) -> None:
 
 
 class FlowWorker:
-    def __init__(self, profile_name: str, db_path: str):
+    def __init__(
+        self,
+        profile_name: str,
+        db_path: str,
+        *,
+        client_opener: Callable[..., AbstractAsyncContextManager[FlowApiClient]] | None = None,
+    ):
         self.profile_name = profile_name
         self.db_path = Path(db_path)
         self.db = DataStore.open(self.db_path)
         self.repo = QueueRepository(self.db)
+        self._client_opener = client_opener
         self._stop = False
+
+    def _open_client(self, **kwargs: Any) -> AbstractAsyncContextManager[FlowApiClient]:
+        if self._client_opener is not None:
+            return self._client_opener(**kwargs)
+        return FlowApiClient(**kwargs)
 
     def stop(self) -> None:
         self._stop = True
@@ -217,7 +230,7 @@ class FlowWorker:
                     DataRepository(self.db), prompt_mode=settings.history_prompts
                 )
                 try:
-                    async with FlowApiClient(
+                    async with self._open_client(
                         profile_dir=profile_dir,
                         headless=headless,
                         transport=transport,
@@ -389,7 +402,7 @@ class FlowWorker:
                 # declared Optional at method scope for the #341 failure funnel).
                 video_recorder = recorder
                 try:
-                    async with FlowApiClient(
+                    async with self._open_client(
                         profile_dir=profile_dir,
                         headless=headless,
                         transport=transport,

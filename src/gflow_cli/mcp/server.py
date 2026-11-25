@@ -160,6 +160,18 @@ _SPEND_TOOLS = (
     "gflow_plus_submit_image",
     "gflow_plus_submit_video",
     "gflow_plus_submit_batch",
+    "gflow_plus_submit_upscale",
+    "gflow_plus_submit_extend",
+    "gflow_plus_retry_job",
+)
+
+# Legacy single-account blocking generation/upscale tools that can be hidden
+# via GFLOW_PLUS_HIDE_SYNC_TOOLS=1 so agents always use non-blocking pool tools.
+_SYNC_GENERATION_TOOLS = (
+    "gflow_generate_image",
+    "gflow_generate_video",
+    "gflow_upscale_image",
+    "gflow_upscale_video",
 )
 
 
@@ -223,6 +235,29 @@ def _apply_no_spend_policy() -> None:
         log.info("mcp.no_spend_active", removed=removed)
 
 
+def hide_sync_tools_active() -> bool:
+    """True when ``GFLOW_PLUS_HIDE_SYNC_TOOLS`` requests hiding blocking sync tools."""
+    value = os.environ.get("GFLOW_PLUS_HIDE_SYNC_TOOLS", "").strip().lower()
+    return value not in ("", "0", "false", "off", "no", "n", "f")
+
+
+def _apply_hide_sync_policy() -> None:
+    """Optionally hide blocking single-account tools so agents always pick gflow_plus_submit_*."""
+    if not hide_sync_tools_active():
+        return
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    removed: list[str] = []
+    for name in _SYNC_GENERATION_TOOLS:
+        try:
+            server.remove_tool(name)
+        except ToolError:
+            continue
+        removed.append(name)
+    if removed:
+        log.info("mcp.plus_hide_sync_tools", removed=removed)
+
+
 def _register_surfaces() -> None:
     """Import tools/prompts/resources so their decorators register them.
 
@@ -237,6 +272,7 @@ def _register_surfaces() -> None:
     from gflow_cli.mcp import tools as _tools
     from gflow_cli.mcp import video_captions_tools as _video_captions_tools
     from gflow_cli.plus import mcp_plus as _mcp_plus
+    from gflow_cli.plus import mcp_plus_ops as _mcp_plus_ops
 
     # Access them to satisfy pyright unused import check
     _ = (
@@ -248,8 +284,10 @@ def _register_surfaces() -> None:
         _tools,
         _video_captions_tools,
         _mcp_plus,
+        _mcp_plus_ops,
     )
     _apply_no_spend_policy()
+    _apply_hide_sync_policy()
 
 
 # ---------------------------------------------------------------------------

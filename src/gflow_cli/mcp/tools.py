@@ -1044,6 +1044,8 @@ def _validate_image_ui_and_thinking(
 @server.tool(
     name="gflow_generate_image",
     description=(
+        "[Blocking single-account call — prefer non-blocking multi-account "
+        "gflow_plus_submit_image / gflow_plus_submit_batch to avoid 50s MCP timeouts.] "
         "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
         "out_file, if given, must resolve inside the configured output directory. "
@@ -1293,6 +1295,8 @@ def _build_video_payload(
 @server.tool(
     name="gflow_generate_video",
     description=(
+        "[Blocking single-account call — prefer non-blocking multi-account "
+        "gflow_plus_submit_video / gflow_plus_submit_batch to avoid 50s MCP timeouts.] "
         "Generate a video using Google Flow's Veo model. "
         "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
         "Aspects: 9:16, 16:9. "
@@ -1862,6 +1866,8 @@ async def gflow_download_media(
 @server.tool(
     name="gflow_upscale_image",
     description=(
+        "[Blocking single-account call — prefer non-blocking gflow_plus_submit_upscale to "
+        "avoid 50s MCP timeouts and auto-route to the owning account.] "
         "Upscale a platform-generated Flow image to 2K or 4K and save it locally. "
         "media_id is the UUID of the image to upscale. "
         "scale is '2k' or '4k' (4k requires Ultra subscription; Pro/Plus accounts support 2k). "
@@ -1923,6 +1929,8 @@ async def gflow_upscale_image(
 @server.tool(
     name="gflow_upscale_video",
     description=(
+        "[Blocking single-account call — prefer non-blocking gflow_plus_submit_upscale to "
+        "avoid 50s MCP timeouts and auto-route to the owning account.] "
         "Upscale or export a platform-generated Flow video to 4K Ultra, 1080p Full HD, "
         "720p, or 270p GIF. "
         "media_id is the UUID of the video to upscale. "

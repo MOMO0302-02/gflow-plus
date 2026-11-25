@@ -22,6 +22,7 @@ from gflow_cli.errors import (
 )
 from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.plus.config import PlusSettings, get_plus_settings
+from gflow_cli.plus.pool.browser_pool import WarmBrowserPool, get_warm_browser_pool
 from gflow_cli.plus.pool.models import AccountHealth, ExecutionOutcome, JobKind
 from gflow_cli.plus.pool.state_store import PlusStateStore
 from gflow_cli.services import credits as credits_service
@@ -114,6 +115,17 @@ def classify_failover(
     return FailoverDecision(retry_other_profile=False, cooldown_s=0.0, cooldown_reason=None)
 
 
+def _match_preferred(
+    candidates: list[AccountHealth],
+    *,
+    preferred: str | None,
+    exclude: frozenset[str],
+) -> str | None:
+    if not preferred or preferred in exclude:
+        return None
+    return next((item.profile for item in candidates if item.profile == preferred), None)
+
+
 class AccountPoolScheduler:
     """Coordinates multiple Flow profiles as independent parallel execution lanes."""
 
@@ -127,6 +139,7 @@ class AccountPoolScheduler:
         clock: Callable[[], float] | None = None,
         sleeper: Callable[[float], Awaitable[None]] | None = None,
         jitter_range: Callable[[str | None], tuple[float, float]] | None = None,
+        browser_pool: WarmBrowserPool | None = None,
     ) -> None:
         self._settings = settings or get_plus_settings()
         self._store = store or PlusStateStore(self._settings.resolved_state_db_path())
@@ -135,6 +148,7 @@ class AccountPoolScheduler:
         self._clock = clock or time.time
         self._sleep = sleeper or asyncio.sleep
         self._jitter_range = jitter_range or resolve_jitter_range
+        self._browser_pool = browser_pool or get_warm_browser_pool()
 
         self._lane_locks: dict[str, asyncio.Lock] = {}
         self._busy_profiles: set[str] = set()
@@ -150,6 +164,10 @@ class AccountPoolScheduler:
     @property
     def settings(self) -> PlusSettings:
         return self._settings
+
+    @property
+    def browser_pool(self) -> WarmBrowserPool:
+        return self._browser_pool
 
     def lane_lock(self, profile: str) -> asyncio.Lock:
         lock = self._lane_locks.get(profile)
@@ -214,6 +232,7 @@ class AccountPoolScheduler:
             st = states.get(meta.name, {})
             cd_until = st.get("cooldown_until")
             in_cooldown = isinstance(cd_until, (int, float)) and float(cd_until) > now
+            disabled = bool(st.get("disabled", 0))
             out.append(
                 AccountHealth(
                     profile=meta.name,
@@ -227,7 +246,8 @@ class AccountPoolScheduler:
                     cooldown_reason=st.get("cooldown_reason"),
                     last_error=st.get("last_error"),
                     last_used_at=st.get("last_used_at"),
-                    healthy=meta.cookies_present and not in_cooldown,
+                    healthy=meta.cookies_present and not in_cooldown and not disabled,
+                    disabled=disabled,
                 )
             )
         return out
@@ -254,6 +274,7 @@ class AccountPoolScheduler:
         async with self.lane_lock(name):
             self.mark_busy(name, True)
             try:
+                await self._browser_pool.evict(name)
                 reply = await self._inspect(name, refresh=renew)
             except SecurityError:
                 raise
@@ -316,8 +337,35 @@ class AccountPoolScheduler:
             "total_credits": sum(known_credits) if known_credits else None,
             "recommended_image_profile": self.pick_profile("image"),
             "recommended_video_profile": self.pick_profile("video"),
+            "warm_browsers": self._browser_pool.warm_profiles(),
             "profiles": [a.to_dict(now=now) for a in accounts],
         }
+
+    def clear_cooldown(self, profile: str | None = None) -> int:
+        """Clear cooldown state for one profile or every stored profile."""
+        if profile is None or profile == "*":
+            return self._store.clear_all_cooldowns()
+        self._store.upsert_account_state(profile, clear_cooldown=True, last_error="")
+        return 1
+
+    def set_disabled(self, profile: str, *, disabled: bool) -> None:
+        """Persist a manual disable/enable toggle for ``profile``."""
+        self._store.upsert_account_state(profile, disabled=disabled)
+
+    async def renew_profile(self, profile: str) -> dict[str, Any]:
+        """Headlessly renew one profile's session and refresh its credit balance."""
+        await self._refresh_one(profile, renew=True)
+        now = self._clock()
+        for account in self.snapshot_health():
+            if account.profile == profile:
+                return account.to_dict(now=now)
+        return {"profile": profile, "healthy": False}
+
+    async def close_warm_browsers(self, profile: str | None = None) -> int:
+        """Close warm Chrome windows for one profile or all profiles."""
+        if profile is None or profile == "*":
+            return await self._browser_pool.close_all()
+        return 1 if await self._browser_pool.evict(profile) else 0
 
     def pick_profile(
         self,
@@ -327,20 +375,18 @@ class AccountPoolScheduler:
         exclude: frozenset[str] = frozenset(),
         required_credits: int | None = None,
         allow_busy: bool = False,
+        pin_preferred: bool = False,
     ) -> str | None:
         """Select the best available profile for a job."""
         candidates = [a for a in self.snapshot_health() if a.healthy and a.profile not in exclude]
         if not allow_busy:
-            idle = [a for a in candidates if not a.busy]
-            if idle:
-                candidates = idle
-            else:
-                return None
+            candidates = [a for a in candidates if not a.busy]
+        if not candidates:
+            return None
 
-        if preferred and preferred not in exclude:
-            for item in candidates:
-                if item.profile == preferred:
-                    return item.profile
+        preferred_hit = _match_preferred(candidates, preferred=preferred, exclude=exclude)
+        if preferred_hit is not None or pin_preferred:
+            return preferred_hit
 
         if kind == "video":
             min_need = max(self._settings.min_video_credits, required_credits or 0)
@@ -356,8 +402,6 @@ class AccountPoolScheduler:
             )
             return candidates[0].profile
 
-        if not candidates:
-            return None
         candidates.sort(key=lambda a: (1 if a.busy else 0, a.last_used_at or 0.0))
         return candidates[0].profile
 

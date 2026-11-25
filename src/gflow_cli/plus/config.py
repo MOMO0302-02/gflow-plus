@@ -81,6 +81,21 @@ class PlusSettings(BaseSettings):
         le=35.0,
         description="Default MCP wait cap (well under common 50s tool timeouts).",
     )
+    warm_browser_ttl_s: float = Field(
+        default=120.0,
+        ge=0.0,
+        description=(
+            "Seconds to keep an idle per-profile Chrome window warm between pool jobs "
+            "(0 disables warm reuse)."
+        ),
+    )
+    hide_sync_tools: bool = Field(
+        default=False,
+        description=(
+            "When true, hide legacy blocking single-account MCP generation/upscale tools "
+            "(gflow_generate_*, gflow_upscale_*) so agents always use gflow_plus_submit_*."
+        ),
+    )
     state_db_path: Path | None = Field(
         default=None,
         description="Optional override path for the independent Plus SQLite state DB.",

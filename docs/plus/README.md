@@ -30,10 +30,15 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | `gflow_plus_pool_status` | 缓存状态 + 活跃任务数，不联网 | 否 |
 | `gflow_plus_submit_image` | 提交一张图（有 `ref_paths` 为 i2i，否则 t2i），默认 `9:16`、`nano2` | 图片 0 积分 |
 | `gflow_plus_submit_video` | 提交一条视频（t2v / i2v / r2v，按输入自动判断），默认 `9:16`、`omni-1.2-flash`；`max_credits` 设上限 | 是 |
-| `gflow_plus_submit_batch` | 一次提交多条：每项 `{"kind": "image"\|"video", "prompt": ..., 以及上面两个工具的参数}` | 视内容 |
+| `gflow_plus_submit_upscale` | 非阻塞提交图片（2k/4k）或视频（1080p/720p/270p/4k）放大，自动路由到归属账号并复用热浏览器 | 视频 4k 是 |
+| `gflow_plus_submit_extend` | 非阻塞提交单段视频续拍，自动路由到归属账号，绝不跨账号重试 | 是 |
+| `gflow_plus_submit_batch` | 一次提交多条图片/视频/放大/续拍，支持 `job:<label>` 批内依赖串联和显式 `depends_on` | 视内容 |
 | `gflow_plus_wait_jobs` | 等任务完成，最多 35 秒一次；返回状态计数和每条的结果（`output_paths`、`media_id`、账号、`duration`）或错误。视频的 `duration` 读自生成的 MP4 文件本身，是实际秒数 | 否 |
-| `gflow_plus_job_status` | 单个任务、整批或最近任务的完整记录（含每次尝试） | 否 |
+| `gflow_plus_job_status` | 单个任务、整批或最近任务的交付记录（批量/列表默认精简回包，`verbose=true` 返回完整尝试日志） | 否 |
 | `gflow_plus_cancel_job` | 取消还在排队的任务；已经在跑的停不下来 | 否 |
+| `gflow_plus_retry_job` | 重跑单个失败/已取消任务或整批失败项（`may_have_spent=true` 或 `indeterminate` 默认拒跑，需显式 `force_spent=true`） | 是 |
+| `gflow_plus_profile_control` | 清除冷却、无头续期登录态、临时禁用/恢复账号、关闭空闲热浏览器 | 否 |
+| `gflow_plus_list_media` | 跨所有账号检索本地 `gflow.db` 里的图片和视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 立即隐藏一次任务栏里的 gflow Chrome | 否 |
 
 推荐给 AI 的用法：`submit_batch` 一次交完 → 反复 `wait_jobs(batch_id=...)` 直到 `done` 为 `true`
@@ -51,6 +56,11 @@ gflow plus health [--no-refresh] [--renew] [--json]
 gflow plus pool status [--json]
 gflow plus pool pick --kind video|image [--json]
 gflow plus pool jobs [--batch-id ID] [--status STATUS] [--limit N] [--json]
+gflow plus pool retry [--job-id ID] [--batch-id ID] [--force-spent] [--profile NAME] [--json]  # 会花积分
+gflow plus pool profile-control clear_cooldown|renew|exclude|include|close_browser [--profile NAME] [--json]
+gflow plus media [--kind all|image|video] [--profile NAME] [--query TEXT] [--limit N] [--json]
+gflow plus upscale MEDIA_ID [--media-kind image|video] [--scale SCALE] [--json]  # 视频 4k 会花积分
+gflow plus extend MEDIA_ID PROMPT [--aspect 9:16|16:9] [--max-credits N] [--json]  # 会花积分
 gflow plus run-batch manifest.json [--no-skip-if-exists] [--json]   # 会花积分
 gflow plus hide-taskbar [--json]
 ```
@@ -72,6 +82,8 @@ gflow plus hide-taskbar [--json]
 | `GFLOW_PLUS_WAF_COOLDOWN_S` | `600` | "检测到异常活动"后的冷却 |
 | `GFLOW_PLUS_MAX_FAILOVER_ATTEMPTS` | `3` | 一个任务最多换几个账号 |
 | `GFLOW_PLUS_DEFAULT_WAIT_TIMEOUT_S` | `25` | `wait_jobs` 默认等待秒数（上限 35） |
+| `GFLOW_PLUS_WARM_BROWSER_TTL_S` | `120` | 单账号空闲热浏览器保活秒数（`0` 关闭复用） |
+| `GFLOW_PLUS_HIDE_SYNC_TOOLS` | `0` | 设为 `1` 隐藏原版阻塞式生成/放大 MCP 工具，避免 AI 误调超时 |
 | `GFLOW_PLUS_STATE_DB_PATH` | `<GFLOW_CLI_HOME>/plus_state.db` | Plus 自己的状态库，不动官方 `gflow.db` |
 | `GFLOW_PLUS_HIDE_TASKBAR` | `1` | `0` 关闭任务栏隐藏 |
 

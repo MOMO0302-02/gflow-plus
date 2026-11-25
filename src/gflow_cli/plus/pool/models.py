@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-JobKind = Literal["image", "video"]
+JobKind = Literal["image", "video", "upscale", "extend"]
 JobStatus = Literal["queued", "running", "succeeded", "failed", "indeterminate", "cancelled"]
 ChargedState = Literal["no", "maybe", "yes"]
 
@@ -26,11 +26,17 @@ class AccountHealth:
     last_error: str | None
     last_used_at: float | None
     healthy: bool
+    disabled: bool = False
 
     def to_dict(self, *, now: float) -> dict[str, Any]:
         remaining = 0.0
         if self.cooldown_until is not None and self.cooldown_until > now:
             remaining = round(self.cooldown_until - now, 1)
+        reason = (
+            "manually_disabled"
+            if self.disabled
+            else (self.cooldown_reason if remaining > 0 else None)
+        )
         return {
             "profile": self.profile,
             "email": self.email,
@@ -38,8 +44,9 @@ class AccountHealth:
             "cookies_present": self.cookies_present,
             "credits": self.credits,
             "busy": self.busy,
+            "disabled": self.disabled,
             "cooldown_remaining_s": remaining,
-            "cooldown_reason": self.cooldown_reason if remaining > 0 else None,
+            "cooldown_reason": reason,
             "last_error": self.last_error,
             "healthy": self.healthy,
         }
@@ -103,6 +110,10 @@ def _empty_attempts() -> list[dict[str, Any]]:
     return []
 
 
+def _empty_deps() -> list[str]:
+    return []
+
+
 @dataclass
 class PoolJob:
     """Persistent state of an async multi-account generation job."""
@@ -120,12 +131,13 @@ class PoolJob:
     error: dict[str, Any] | None = None
     may_have_spent: bool = False
     attempts: list[dict[str, Any]] = field(default_factory=_empty_attempts)
+    depends_on: list[str] = field(default_factory=_empty_deps)
     created_at: str = ""
     updated_at: str = ""
     owner: str | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "job_id": self.job_id,
             "batch_id": self.batch_id,
             "label": self.label,
@@ -140,10 +152,13 @@ class PoolJob:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.depends_on:
+            data["depends_on"] = list(self.depends_on)
+        return data
 
     def to_brief_dict(self) -> dict[str, Any]:
-        """What a polling agent needs per job; ``to_public_dict`` keeps the full record."""
-        return {
+        """Compact polling view (omits attempt traces and timestamps to save tokens)."""
+        data: dict[str, Any] = {
             "job_id": self.job_id,
             "label": self.label,
             "status": self.status,
@@ -152,3 +167,6 @@ class PoolJob:
             "error": self.error,
             "may_have_spent": self.may_have_spent,
         }
+        if self.depends_on:
+            data["depends_on"] = list(self.depends_on)
+        return data

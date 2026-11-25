@@ -96,6 +96,11 @@ CLI_TO_MCP: dict[str, str] = {
     "plus pool status": "gflow_plus_pool_status",
     "plus pool pick": "gflow_plus_pool_status",
     "plus pool jobs": "gflow_plus_job_status",
+    "plus pool retry": "gflow_plus_retry_job",
+    "plus pool profile-control": "gflow_plus_profile_control",
+    "plus media": "gflow_plus_list_media",
+    "plus upscale": "gflow_plus_submit_upscale",
+    "plus extend": "gflow_plus_submit_extend",
     "plus run-batch": "gflow_plus_submit_batch",
     "plus hide-taskbar": "gflow_plus_hide_taskbar",
 }

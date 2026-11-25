@@ -18,17 +18,22 @@
 
 | 工具 | 作用 | 花积分 |
 |---|---|---|
-| `gflow_plus_health` | 查所有账号的健康状态、积分、冷却时间，以及推荐用哪个账号 | 否 |
+| `gflow_plus_health` | 查所有账号的健康状态、积分、冷却时间、热浏览器和推荐账号 | 否 |
 | `gflow_plus_pool_status` | 读缓存的账号状态和任务数，不开浏览器、不联网 | 否 |
 | `gflow_plus_submit_image` | 提交出图任务（文生图 / 图生图），立即返回 `job_id` | 是 |
 | `gflow_plus_submit_video` | 提交视频任务（文生视频 / 图生视频 / 参考图生视频），立即返回 `job_id`，可用 `max_credits` 设积分上限 | 是 |
-| `gflow_plus_submit_batch` | 一次提交多条图片 / 视频任务，分给所有健康账号并行生成 | 是 |
-| `gflow_plus_job_status` | 查单个任务、整批任务或最近任务的状态和交付记录 | 否 |
+| `gflow_plus_submit_upscale` | 非阻塞提交图片（2K/4K）或视频（1080p/720p/270p/4K）放大任务，自动路由到素材归属账号 | 视频 4K 是 |
+| `gflow_plus_submit_extend` | 非阻塞提交单段视频续拍任务，自动路由到归属账号且绝不跨号重试 | 是 |
+| `gflow_plus_submit_batch` | 一次提交多条图片/视频/放大/续拍任务，支持 `job:<label>` 依赖串联（如出图→自动 2K 放大或出图→自动首帧生视频） | 是 |
+| `gflow_plus_job_status` | 查单个任务、整批任务或最近任务的状态和交付记录（列表默认精简回包省 Token，可设 `verbose=true` 看完整尝试日志） | 否 |
 | `gflow_plus_wait_jobs` | 等待任务完成，每次最多等 35 秒左右，没完成就再调一次 | 否 |
 | `gflow_plus_cancel_job` | 取消还在排队、没开始跑的任务 | 否 |
+| `gflow_plus_retry_job` | 一键重跑失败/已取消的单个任务或整批失败项（已扣费或不确定状态的任务默认拒跑，防止双扣） | 是 |
+| `gflow_plus_profile_control` | 运行时运维：清除冷却、无头续期登录态、临时禁用/恢复某账号、关闭空闲热浏览器 | 否 |
+| `gflow_plus_list_media` | 跨所有账号检索本地已生成的图片/视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 在 Windows 上立即隐藏后台 Chrome 窗口的任务栏图标 | 否 |
 
-官方原有的工具（`gflow_generate_image`、`gflow_generate_video`、`gflow_get_credits` 等）全部保留，用法不变。
+官方原有的工具（`gflow_generate_image`、`gflow_generate_video`、`gflow_get_credits` 等）全部保留，用法不变；如果希望彻底避免 AI 误调同步阻塞工具，可在环境变量中设置 `GFLOW_PLUS_HIDE_SYNC_TOOLS=1`。
 
 ## 安装
 
@@ -93,7 +98,12 @@ gflow plus health                                      # 检查所有账号（�
 | `gflow plus pool status` | 查看缓存的账号状态和最近任务（不开浏览器、不联网） |
 | `gflow plus pool pick` | 看当前出图 / 出视频会选哪个账号 |
 | `gflow plus pool jobs` | 列出后台任务和交付记录 |
-| `gflow plus run-batch` | 按 JSON 清单把一批任务分给所有健康账号并行生成 |
+| `gflow plus pool retry` | 重跑失败或已取消的任务（默认防双扣） |
+| `gflow plus pool profile-control` | 清冷却、无头续期、临时禁用/启用账号、关闭热浏览器 |
+| `gflow plus media` | 跨账号检索本地已生成的图片与视频 |
+| `gflow plus upscale` | 通过归属账号的热浏览器通道放大图片或视频 |
+| `gflow plus extend` | 通过归属账号的热浏览器通道续拍一段视频 |
+| `gflow plus run-batch` | 按 JSON 清单把一批（可带 `job:<label>` 依赖）任务分给健康账号执行 |
 | `gflow plus hide-taskbar` | 隐藏后台 Chrome 窗口的任务栏图标（仅 Windows） |
 
 官方原有的命令（`gflow image`、`gflow video`、`gflow credits` 等）全部可用，见 [官方使用文档](../docs/USAGE.md)（英文）。
@@ -115,6 +125,8 @@ gflow plus health                                      # 检查所有账号（�
 | `GFLOW_PLUS_TRANSIENT_COOLDOWN_S` | `30` | 提交前的临时网络 / 页面错误冷却多少秒 |
 | `GFLOW_PLUS_MAX_FAILOVER_ATTEMPTS` | `3` | 不扣费的失败最多换几个账号重试 |
 | `GFLOW_PLUS_DEFAULT_WAIT_TIMEOUT_S` | `25` | `gflow_plus_wait_jobs` 默认每次等多少秒 |
+| `GFLOW_PLUS_WARM_BROWSER_TTL_S` | `120` | 每个账号空闲 Chrome 热复用的保活秒数（设 `0` 关闭复用） |
+| `GFLOW_PLUS_HIDE_SYNC_TOOLS` | `0` | 设为 `1` 时在 MCP 工具列表里隐藏原版阻塞式生图/生视频/放大工具，防止 AI 误调超时 |
 | `GFLOW_PLUS_HIDE_TASKBAR` | `1` | 是否隐藏后台 Chrome 的任务栏图标（Windows） |
 
 ## 版本与分支
