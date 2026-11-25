@@ -26,6 +26,7 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from ctypes import wintypes
+from typing import Any
 
 import structlog
 
@@ -106,8 +107,10 @@ def _get_window_process_image(user32: object, kernel32: object, hwnd: int) -> st
 
 
 def _win32_hide_offscreen_chrome() -> int:
-    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    # Windows-only ctypes members are unknown to a type checker on Linux and macOS.
+    windll: Any = getattr(ctypes, "windll")  # noqa: B009
+    user32: Any = windll.user32
+    kernel32: Any = windll.kernel32
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.QueryFullProcessImageNameW.argtypes = [
@@ -121,7 +124,8 @@ def _win32_hide_offscreen_chrome() -> int:
     kernel32.CloseHandle.restype = wintypes.BOOL
     hidden_count = 0
 
-    enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    winfunctype: Any = getattr(ctypes, "WINFUNCTYPE")  # noqa: B009
+    enum_proc_type = winfunctype(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def _callback(hwnd: int, _lparam: int) -> bool:
         nonlocal hidden_count

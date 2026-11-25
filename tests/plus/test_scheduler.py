@@ -70,6 +70,9 @@ def _make_scheduler(
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(
+    allow_n_plus_one=True
+)  # one pool-state read per pick, several picks on purpose
 async def test_video_picks_highest_credit_idle_account_and_skips_low_balance(
     tmp_path: Path,
 ) -> None:

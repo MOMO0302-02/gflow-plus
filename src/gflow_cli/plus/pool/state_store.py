@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -117,24 +117,8 @@ class PlusStateStore:
         last_used_at: float | None = None,
         clear_cooldown: bool = False,
     ) -> None:
-        cur = self.get_account_state(profile)
-        new_credits = credits if credits is not None else cur.get("credits")
-        new_checked = (
-            credits_checked_at if credits_checked_at is not None else cur.get("credits_checked_at")
-        )
-        if clear_cooldown:
-            new_cd_until = None
-            new_cd_reason = None
-        else:
-            new_cd_until = (
-                cooldown_until if cooldown_until is not None else cur.get("cooldown_until")
-            )
-            new_cd_reason = (
-                cooldown_reason if cooldown_reason is not None else cur.get("cooldown_reason")
-            )
-        new_err = last_error if last_error is not None else cur.get("last_error")
-        new_used = last_used_at if last_used_at is not None else cur.get("last_used_at")
-
+        # One statement, so an update never reads a row another process is about to change:
+        # a field left as None keeps the stored value; clear_cooldown nulls both cooldown fields.
         with self._connect() as con:
             con.execute(
                 """
@@ -143,21 +127,25 @@ class PlusStateStore:
                     cooldown_reason, last_error, last_used_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(profile) DO UPDATE SET
-                    credits = excluded.credits,
-                    credits_checked_at = excluded.credits_checked_at,
-                    cooldown_until = excluded.cooldown_until,
-                    cooldown_reason = excluded.cooldown_reason,
-                    last_error = excluded.last_error,
-                    last_used_at = excluded.last_used_at
+                    credits = COALESCE(excluded.credits, credits),
+                    credits_checked_at = COALESCE(excluded.credits_checked_at, credits_checked_at),
+                    cooldown_until = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.cooldown_until, cooldown_until) END,
+                    cooldown_reason = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.cooldown_reason, cooldown_reason) END,
+                    last_error = COALESCE(excluded.last_error, last_error),
+                    last_used_at = COALESCE(excluded.last_used_at, last_used_at)
                 """,
                 (
                     profile,
-                    new_credits,
-                    new_checked,
-                    new_cd_until,
-                    new_cd_reason,
-                    new_err,
-                    new_used,
+                    credits,
+                    credits_checked_at,
+                    None if clear_cooldown else cooldown_until,
+                    None if clear_cooldown else cooldown_reason,
+                    last_error,
+                    last_used_at,
+                    clear_cooldown,
+                    clear_cooldown,
                 ),
             )
 
@@ -231,6 +219,19 @@ class PlusStateStore:
         with self._connect() as con:
             row = con.execute("SELECT * FROM plus_jobs WHERE job_id = ?", (job_id,)).fetchone()
         return _row_to_job(row) if row is not None else None
+
+    def get_jobs(self, job_ids: Sequence[str]) -> list[PoolJob]:
+        """The jobs that exist among ``job_ids``, in that order, read in one query."""
+        if not job_ids:
+            return []
+        marks = ",".join("?" * len(job_ids))
+        with self._connect() as con:
+            rows = con.execute(
+                f"SELECT * FROM plus_jobs WHERE job_id IN ({marks})",  # noqa: S608 — only placeholders
+                tuple(job_ids),
+            ).fetchall()
+        by_id = {job.job_id: job for job in map(_row_to_job, rows)}
+        return [by_id[jid] for jid in job_ids if jid in by_id]
 
     def list_jobs(
         self,

@@ -272,7 +272,7 @@ class PoolJobManager:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + cap
         while True:
-            jobs = [j for jid in targets if (j := self._store.get_job(jid)) is not None]
+            jobs = self._store.get_jobs(targets)
             remaining = [j.job_id for j in jobs if j.status not in _TERMINAL_STATUSES]
             left = deadline - loop.time()
             if not remaining or left <= 0:

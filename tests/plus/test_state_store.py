@@ -52,3 +52,29 @@ def test_owner_column_is_added_to_an_existing_database(tmp_path: Path) -> None:
     old = PlusStateStore(db).get_job("old")
     assert old is not None
     assert old.owner is None
+
+
+def test_get_jobs_reads_several_jobs_in_the_order_asked(tmp_path: Path) -> None:
+    store = PlusStateStore(tmp_path / "plus_state.db")
+    for jid in ("a", "b", "c"):
+        store.create_job(
+            PoolJob(job_id=jid, kind="image", task_type="t2i", status="queued", payload={})
+        )
+
+    assert [j.job_id for j in store.get_jobs(["c", "missing", "a"])] == ["c", "a"]
+    assert store.get_jobs([]) == []
+
+
+def test_account_state_update_keeps_fields_it_was_not_given(tmp_path: Path) -> None:
+    store = PlusStateStore(tmp_path / "plus_state.db")
+    store.upsert_account_state(
+        "acc", credits=50, cooldown_until=99.0, cooldown_reason="waf", last_error="boom"
+    )
+    store.upsert_account_state("acc", last_used_at=7.0)
+    state = store.get_account_state("acc")
+    assert (state["credits"], state["cooldown_reason"], state["last_used_at"]) == (50, "waf", 7.0)
+
+    store.upsert_account_state("acc", credits=60, last_error="", clear_cooldown=True)
+    state = store.get_account_state("acc")
+    assert (state["credits"], state["cooldown_until"], state["cooldown_reason"]) == (60, None, None)
+    assert state["last_error"] == ""

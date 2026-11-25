@@ -60,6 +60,7 @@ def _make_manager(tmp_path: Path, executor: Any) -> PoolJobManager:
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(allow_n_plus_one=True)  # one job-row read per job across three jobs
 async def test_three_lanes_run_in_parallel_without_same_profile_collision(tmp_path: Path) -> None:
     active_per_profile: dict[str, int] = {}
     max_concurrent = 0
@@ -100,6 +101,9 @@ async def test_three_lanes_run_in_parallel_without_same_profile_collision(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(
+    allow_n_plus_one=True
+)  # one pool-state read per scheduling decision, once per attempt
 async def test_non_charged_ui_failure_fails_over_to_second_account(tmp_path: Path) -> None:
     calls: list[str] = []
 
@@ -142,6 +146,9 @@ async def test_non_charged_ui_failure_fails_over_to_second_account(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(
+    allow_n_plus_one=True
+)  # one pool-state read per scheduling decision, once per attempt
 async def test_maybe_charged_failure_never_retries_another_account(tmp_path: Path) -> None:
     calls: list[str] = []
 
@@ -223,6 +230,7 @@ async def test_wait_jobs_respects_short_timeout_without_cancelling_background_jo
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(allow_n_plus_one=True)  # polls the pool every 1 ms until a lane frees
 async def test_jobs_beyond_lane_count_queue_until_a_lane_frees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -292,6 +300,7 @@ def _orphan(store: PlusStateStore, job_id: str, kind: str, status: str, owner: s
 
 
 @pytest.mark.asyncio
+@pytest.mark.sharpit(allow_n_plus_one=True)  # one job-row read per recovered job
 async def test_restarted_process_takes_over_orphans_but_never_reruns_a_video(
     tmp_path: Path,
 ) -> None:
