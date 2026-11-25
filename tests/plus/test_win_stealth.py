@@ -41,9 +41,9 @@ def test_allowed_process_image_only_matches_chrome_and_chromium() -> None:
     assert (
         is_allowed_process_image(r"C:\Program Files\Google\Chrome\Application\chrome.exe") is True
     )
-    assert is_allowed_process_image(r"C:\Users\me\chromium\CHROME.EXE") is True
+    assert is_allowed_process_image(r"D:\Apps\chrome-win\CHROME.EXE") is True
     assert is_allowed_process_image(r"D:\Apps\chromium\chromium.exe") is True
     # Electron / Chromium desktop apps share Chrome_WidgetWin_1 and must never be touched
     assert is_allowed_process_image(r"C:\Program Files\TencentDocs\TencentDocs.exe") is False
-    assert is_allowed_process_image(r"C:\Users\me\AppData\Local\Feishu\Feishu.exe") is False
+    assert is_allowed_process_image(r"D:\Apps\Feishu\Feishu.exe") is False
     assert is_allowed_process_image("") is False
