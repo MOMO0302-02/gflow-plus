@@ -34,7 +34,6 @@
  "C901:src/gflow_cli/mcp/tools.py::gflow_generate_video": 18,
  "C901:src/gflow_cli/services/catalog_sync.py::run_sync": 15,
  "C901:src/gflow_cli/services/mentions.py::resolve_mentions": 27,
- "C901:src/gflow_cli/update_check.py::run_update": 12,
  "C901:src/gflow_cli/worker/daemon.py::FlowWorker.process_task": 33,
  "PLR0915:src/gflow_cli/api/transports/_mc_submit_observe.py::SubmitObserveMixin.submit_and_observe": 190,
  "PLR0915:src/gflow_cli/api/transports/_mc_submit_observe.py::SubmitObserveMixin.submit_images_and_observe": 73,

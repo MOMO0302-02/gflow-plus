@@ -80,8 +80,7 @@ the host: a request gflow cannot drive there is **not ported yet**.
 ## No call to Flow
 
 The command makes no call to Flow and opens no browser. (Like every `gflow` command, the
-process may still run its once-a-day update check and the weekly telemetry upload;
-see [CONFIGURATION](CONFIGURATION.md#gflow_cli_update_check) and [TELEMETRY](TELEMETRY.md).)
+process may still run the weekly telemetry upload; see [TELEMETRY](TELEMETRY.md).)
 Its only input is `GFLOW_CLI_FLOW_HOST`. Nothing on disk records which host Flow served
 a profile, so the document is the same for every profile, and under `auto` it describes
 both arms. There is no `--probe` yet; per-profile resolution is

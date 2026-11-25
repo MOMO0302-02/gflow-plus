@@ -23,14 +23,6 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 - **Workaround:** use `veo-lite` or `omni-1.2` (`omni-1.2-flash`). The short aliases `omni` and `flash` keep selecting Omni 1.1 until the date passes, so a script's model and price do not change underneath it; repointing them to Omni 1.2 is #1379.
 - **Evidence:** the dates are read from Flow's `HTrJv` catalog, recorded in `tests/fixtures/flow_htrjv_model_families.json` (re-record with `scripts/dev/record_htrjv_fixture.py`); `tests/api/test_model_catalog.py` fails when a refreshed capture moves a date.
 
-### On Windows, `gflow update` from a pip install at 0.99.0 or older can leave gflow unusable
-
-- **Status:** Open for installs at 0.99.0 and below; fixed in the updater from 0.100.0 · **Severity:** High for the affected install (gflow stops working) · **Affected:** `gflow update` in a Windows pip virtual environment or `pip --user` install, run from 0.99.0 or older. uv tool and pipx installs are not affected.
-- **Tracked:** [#1298](https://github.com/ffroliva/gflow-cli/issues/1298), fixed by [PR #1304](https://github.com/ffroliva/gflow-cli/pull/1304)
-- **Cause:** every running gflow process holds its own `gflow.exe` launcher open, and pip uninstalls the old files before it writes the new ones, so it fails halfway and never rolls back. From 0.100.0, `gflow update` renames the launchers aside first, but an older install still runs its old updater.
-- **Workaround:** upgrade once by hand. Close every gflow process (MCP servers, `gflow serve`), then run `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (with any extras you installed, e.g. `"gflow-cli[patchright]"`, or their pins stay behind), or for a `--user` install `py -3.X -m pip install --user --upgrade gflow-cli`, where `3.X` is the Python gflow was installed under (`py -0p` lists them). From then on `gflow update` works. Details: [USAGE § `gflow update`](docs/USAGE.md#gflow-update).
-- **Evidence:** `tests/e2e/test_update_installer_e2e.py` (`e2e_update`), 4/4 on the v0.100.0 release tree; [LIVE_VERIFICATION_v0.100.0](docs/LIVE_VERIFICATION_v0.100.0.md).
-
 ### The direct credits read uses the profile's saved Google session outside Chrome
 
 - **Status:** Open (a risk under watch, not a failure seen) · **Severity:** Low as measured; the long-run effect on the account is unmeasured · **Affected:** `gflow credits user` / `list` and MCP `gflow_get_credits`, on Windows and Linux by default (off by default on macOS, and skipped while any proxy is configured)
@@ -529,7 +521,7 @@ row whose files are on disk and recorded in the catalog as that project's images
 **Not this issue if your Flow UI is not in English.** Before v0.83.2, a translated duration
 unit (`8 giây` in Vietnamese) also raised exit 11 on `flow.google.com`, because the radio
 was matched on its English label ([#963](https://github.com/ffroliva/gflow-cli/issues/963)).
-Upgrade first (`gflow update`). The locale refutation below applies to the Portuguese
+Upgrade first (reinstall from GitHub: `uv pip install --python <venv python> --reinstall-package gflow-plus "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"`). The locale refutation below applies to the Portuguese
 labs cohort it was measured on.
 
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the

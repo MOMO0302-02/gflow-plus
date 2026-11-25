@@ -59,7 +59,7 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("TZ", "America/New_York")
-    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "in_ci", lambda: False)
     monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     home = tmp_path / "gflow_home"
     home.mkdir(exist_ok=True)
@@ -449,7 +449,7 @@ def test_show_prints_the_report_as_json() -> None:
 def test_status_names_the_kill_switch_in_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "in_ci", lambda: False)
     monkeypatch.setattr(update_check, "_installed_from_index", lambda: False)
     monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     runner = CliRunner()

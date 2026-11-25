@@ -38,13 +38,13 @@ uv tool run --from gflow-cli playwright install chromium
 
 ## Upgrade
 
+gflow-plus installs from its GitHub repository, never from PyPI (a PyPI upgrade replaces it
+with upstream gflow-cli). Reinstall a release tag into the same environment:
+
 ```bash
-gflow update            # runs the installer that put gflow-cli here: uv tool / pipx / pip
-gflow update --check    # only report installed vs latest
+uv pip install --python <venv python> --reinstall-package gflow-plus "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"
 ```
 
-Every other command shows a banner when a newer release is on PyPI (`GFLOW_CLI_UPDATE_CHECK=0`
-silences it). Installed from a checkout? `gflow update` refuses (exit 11) — `git pull` and
-reinstall instead. Full behaviour: [USAGE § `gflow update`](USAGE.md#gflow-update).
+Full behaviour: [USAGE § Upgrading](USAGE.md#upgrading).
 
 Next: [**Authentication →**](AUTHENTICATION.md).

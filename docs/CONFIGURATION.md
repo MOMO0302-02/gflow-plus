@@ -354,14 +354,6 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 **Recommended starting point:** `1` until a concurrent caller lands. Each additional Page would cost ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page would inherit the signed-in profile for free.
 **Shipped in:** v0.4.0a2.
 
-### `GFLOW_CLI_UPDATE_CHECK`
-
-**What:** Once-a-day best-effort PyPI check that shows an update banner on stderr when a newer gflow-cli exists — a bordered panel with the new version, `gflow update`, and the release-notes link when stderr is a terminal; one plain yellow line when piped. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap. `gflow update` / `gflow update --check` refresh the same cache synchronously, and suppress the banner so it never contradicts the live install result.
-**Values:** `1` (default) | `0` to disable
-**Skipped automatically:** in CI (`CI` set to anything but `0` / `false`) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
-**Upgrading:** [`gflow update`](USAGE.md#gflow-update) runs the installer that put gflow-cli here (`uv tool` / `pipx` / the venv's own `pip`).
-**Shipped in:** #479 (notice); `gflow update` + banner in #668.
-
 ### `GFLOW_CLI_TELEMETRY` and `DO_NOT_TRACK`
 
 **What:** Kill switches for local weekly usage counters and their uploads (#1164). Counters include command and flag names, exit codes and coarse duration buckets in `<GFLOW_CLI_HOME>/telemetry.db`; reports are uploaded weekly only after the interactive notice. No prompts, paths, account data or install identifiers are recorded.
@@ -527,7 +519,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Default:** `playwright`
 **What `patchright` is:** an opt-in, drop-in patched Playwright (Chromium) that runs page evaluations in an isolated execution context to avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. It is **not** a headless unlock — Google still detects headless Chromium regardless of engine.
 **Install:** `pip install 'gflow-cli[patchright]'` (or `pip install patchright==1.64.4`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
-**Version:** use patchright `1.64.4` (the extra's pin). patchright `1.61.2` resolves `locator.last` to nothing, which makes every flow.google.com generation fail with exit 23 "0 option groups rendered" (#1319). Use gflow 0.101.2 or later with it: on 0.101.1, patchright 1.64.4 waits out the 30 s close timeout on every run and then force-closes the profile (#1324). From the release after 0.101.2, `gflow update` keeps installed extras and moves their pins (#1322). The update runs the installed version's code, so leaving 0.101.2 or earlier still needs one manual re-install: `pip install -U 'gflow-cli[patchright]'`, then check `pip show patchright`.
+**Version:** use patchright `1.64.4` (the extra's pin). patchright `1.61.2` resolves `locator.last` to nothing, which makes every flow.google.com generation fail with exit 23 "0 option groups rendered" (#1319). Use gflow 0.101.2 or later with it: on 0.101.1, patchright 1.64.4 waits out the 30 s close timeout on every run and then force-closes the profile (#1324). To upgrade, reinstall gflow-plus with the extra named in the spec (`"gflow-plus[patchright] @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"`, see [USAGE § Upgrading](USAGE.md#upgrading)), then check `pip show patchright`.
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
 **Security note:** the `patchright` extra ships a *patched Chromium driver* that handles your live Google session cookies; it is exact-pinned and treated as a security-review-required dependency. See [SECURITY.md § Dependencies](SECURITY.md).
 

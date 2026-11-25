@@ -63,7 +63,6 @@ Commands:
   telemetry     Inspect and control usage counters and weekly uploads.
   mcp       MCP server over stdio (run) + client-config generator (setup).
   serve     MCP server over Streamable HTTP at /mcp.
-  update    Upgrade gflow-cli in place via uv tool / pipx / pip (--check to only report).
 ```
 
 Global flags:
@@ -2112,7 +2111,7 @@ Twelve checks run on every invocation:
 | `catalog.display_name_missing` | Assets with no recorded display name (the picker search key) | `gflow data sync --names` |
 | `catalog.local_file_missing` | Cataloged local files that no longer exist on disk | `gflow data prune --dry-run` |
 | `catalog.sha256_null` | Local files with no recorded sha256 | `gflow data sync` |
-| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `gflow update` |
+| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / [upgrade](#upgrading) |
 | `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
 | `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
 | `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
@@ -2144,155 +2143,34 @@ UUID only (never display-name values), and paths are sanitized. Under
 reports `info` instead of `warn` — name backfill is deliberately suppressed by
 that privacy setting, so missing names are expected, not a defect.
 
-## `gflow update`
+## Upgrading
 
-Upgrade gflow-cli in place, through the package manager that installed it.
-**Stop every other `gflow` process first** — see below.
+gflow-plus is installed from its GitHub repository, never from PyPI: `pip install -U
+gflow-cli` or any other PyPI upgrade replaces it with upstream gflow-cli. There is no
+`gflow update` command and no update notice. To upgrade, reinstall a release tag into the
+same environment:
 
 ```text
-gflow update [--check] [-v|--verbose] [--json]
+uv pip install --python <venv python> --reinstall-package gflow-plus "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"
 ```
 
-The installer is read off the install itself, never guessed from `PATH`:
+Name any extras you installed in the spec (for example `"gflow-plus[patchright] @ git+…"`),
+or their pins stay behind. If the upgrade moved Playwright, run
+`<that venv's python> -m playwright install chromium` so the browser build matches.
 
-| Marker in the install's venv root | Installer | Command run |
-|---|---|---|
-| `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
-| `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
-| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade "gflow-cli[<extras>]"` (adds `--user` for a user-site install) |
+**Stop every other `gflow` process BEFORE you upgrade — not after.** On Windows every
+running gflow process holds its `gflow.exe` launcher open, and an installer run that hits
+it can abort part-way and leave `gflow` unimportable. The holder reported so far is
+**`gflow mcp run`**: an editor with gflow registered as an MCP server starts one per
+session, and they outlive the command that started them
+([#848](https://github.com/ffroliva/gflow-cli/issues/848#issuecomment-5704903340)).
+On Windows, `tasklist | findstr gflow` lists image names only — a server registered as
+`uv run gflow …` shows up as `uv.exe`, not `gflow.exe`; elsewhere `pgrep -fa gflow`
+prints the command line it matched, so you can see what you are about to stop. If an
+upgrade does abort anyway, re-run the reinstall command from a shell with no gflow running.
 
-**Extras are kept.** pip upgrades only what it is asked for, so on a pip install `gflow update`
-requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`),
-and the extra's own pin moves with the release (#1322). `uv tool upgrade` and `pipx upgrade`
-already reinstall the extras recorded at install time. The repair commands gflow prints carry
-the same extras.
-
-> [!NOTE]
-> **One-time manual upgrade for pip installs at 0.101.2 and below ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)):**
-> an install at <= 0.101.2 runs its *existing* `gflow update` code, which upgrades only
-> `gflow-cli` and leaves an extra's pin behind. Upgrade once by hand with the extras named,
-> for example `pip install -U 'gflow-cli[patchright]'`; every later `gflow update` keeps them.
-
-`gflow update` first asks PyPI for the latest version (when PyPI answers, this
-refreshes the once-a-day notice cache too). If you are already current it says so and runs
-nothing. Otherwise it runs the manager with output captured (pass `-v`/`--verbose` to view it, or see it on failure), then re-reads the
-venv's Playwright version: when the upgrade moved it, a hint gives you the exact
-`<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
-unreachable the manager still runs — it is the authority on what is installable.
-
-`--check` only reports installed vs latest plus the command that *would* run;
-`-v` / `--verbose` streams the package manager's output live (with `--json` it stays
-captured, so stdout is one JSON document; the root `gflow -v` only raises log verbosity);
-`--json` returns `{status: "ok", installed, latest, update_available, installer,
-command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
-be reached; after an upgrade `latest` is the version the venv actually reports;
-`notes` carries the Playwright hint and the Windows launcher caveat below).
-
-`ConfigurationError` (exit 11) cases:
-
-- **before anything is spawned** — an editable / local-path / VCS / source
-  install (PEP 610 `direct_url.json` present): update those the way they were
-  installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
-  but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
-  message carries the exact command to run yourself; on Windows under pip, a
-  launcher held by another program or missing from an interrupted update;
-- **after the manager ran** — first, the venv can no longer import gflow-cli at
-  all (see below); then, the venv still reports the old version (a receipt
-  pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
-  or the version could not be re-read at all. The manager's own output is above
-  the error. One carve-out: when PyPI was unreachable *and* the manager exited 0
-  *and* nothing changed, the manager simply found nothing newer — exit 0.
-
-**A half-replaced environment is detected, not reported as a version.** Managers
-replace files in place, so an interrupted run can leave a venv whose *metadata*
-reads perfectly and whose *imports* are dead — measured on Windows in
-[#848](https://github.com/ffroliva/gflow-cli/issues/848), where an aborted native
-dependency swap left every command dying on `AttributeError: module 'greenlet'
-has no attribute 'greenlet'` while the version still read `0.69.0`. After the
-manager runs, `gflow update` therefore imports gflow-cli in a fresh isolated
-interpreter before it looks at any version. If that import fails the command
-exits 11 saying the install is unusable and quoting the interpreter's own last
-line, and the remediation is a **forced reinstall**
-(`uv tool install "gflow-cli==<version>" --force --reinstall`, or the pipx / pip
-equivalent) — a plain `upgrade` cannot repair that state, because it reads the
-metadata, finds it current and changes nothing.
-
-The venv is the truth, not the manager's exit code: after the manager runs,
-`gflow update` re-reads the installed gflow-cli version from a fresh interpreter
-and reports *that*. **Windows:** on `uv tool upgrade`, the new wheel installs into
-site-packages before updating entrypoints, then uv exits 1 copying the launcher
-("os error 32"). The upgrade *did* happen — the launcher only points at the venv's
-python — so `gflow update` reports it as upgraded, prints the manager's captured
-output, and adds a note quoting its exit code. On `pipx`, the running trampoline is
-outside the venv, so pip upgrades the venv cleanly and pipx skips overwriting the
-bin copy.
-
-Under a **pip virtual environment or user install**, on Windows `gflow update`
-renames the running console-script launchers aside before pip runs
-([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)). Pip can then uninstall old
-files and create fresh launchers cleanly. User-site installs (`pip install --user`)
-are detected and upgraded with `--user` so pip does not create a duplicate shadowing
-copy. If another running gflow process (an MCP server, `gflow serve`) holds a
-launcher, the update stops before changing anything (exit 11) to protect the
-environment. Any launcher pip did not recreate is restored. On any other rename error
-(for example access denied on an all-users Python), the update runs as before without
-the guard. Leftover launcher backups (`*.gflow-update-<pid>.old`) from an earlier update
-are removed on subsequent runs, including `gflow update --check`.
-
-> [!NOTE]
-> **One-time manual upgrade for Windows pip installs at 0.99.0 and below ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)):**
-> Because installs at <= 0.99.0 run their *existing* `gflow update` code, upgrading
-> directly via `gflow update` hits the old launcher lock and leaves the environment
-> stripped of `gflow_cli`. Close every gflow process, then run this one-time command
-> instead:
->
-> Virtual environment:
-> ```powershell
-> <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
-> ```
->
-> Name any extras you installed in the spec (for example `"gflow-cli[patchright]"`), or
-> pip upgrades gflow-cli alone and the extra's pin stays behind. The same applies when you
-> already run the latest release with an outdated extra: `gflow update` finds nothing newer
-> and changes nothing, so run `pip install --upgrade "gflow-cli[patchright]"` once by hand.
->
-> User-site install (`--user` — use the interpreter that owns the install, where `3.12` is the Python version gflow was installed under; `gflow --version` does not show it, but `py -0p` lists the interpreters):
-> ```powershell
-> py -3.12 -m pip install --user --upgrade gflow-cli
-> ```
->
-> Once upgraded past 0.99.0, normal `gflow update` handles future upgrades cleanly.
-
-**Stop every other `gflow` process BEFORE you upgrade — not after.** On a Windows pip
-install, another gflow process holding a launcher causes `gflow update` to refuse before
-`pip` runs, which protects the install; an interrupted or failed `pip` / installer run can
-still leave `gflow` unimportable, and the repair is the force-reinstall command `gflow update`
-prints. The holder
-reported so far is **`gflow mcp run`**: an editor with gflow registered as an MCP server
-starts one per session, and they outlive the command that started them. Reported with a
-reproduction in
-[#848](https://github.com/ffroliva/gflow-cli/issues/848#issuecomment-5704903340):
-`uv tool install --force` failed with *"Access is denied"* on
-`…\uv\tools\gflow-cli\Scripts` and left the install answering
-`No module named 'gflow_cli'` until those processes were stopped and the install
-re-run.
-
-Close the editor sessions (or stop the servers) first. On Windows,
-`tasklist | findstr gflow` lists image names only — a server registered as
-`uv run gflow …` shows up as `uv.exe`, not `gflow.exe`; elsewhere
-`pgrep -fa gflow` prints the command line it matched, so you can see what you
-are about to stop. `gflow update` cannot run this check for you: it is itself
-one of those processes. If an upgrade does abort anyway, the exit-11 **forced
-reinstall** above is the repair — run it from a shell with no gflow running.
-
-Restart any running `gflow serve` / MCP server afterwards too; a long-lived
-process keeps the old code until it restarts. There is deliberately no MCP twin
-of this command: a server must not replace its own code underneath itself.
-
-Every command (other than `gflow update` itself) also prints an **update banner** on stderr (a one-line notice when
-stderr is not a terminal) when a newer release is known — see
-[CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
-for the once-a-day cache and how to silence it.
+Restart any running `gflow serve` / MCP server afterwards too; a long-lived process keeps
+the old code until it restarts.
 
 ## `gflow cancel`
 
@@ -2700,10 +2578,6 @@ gflow image batch ./batch-b.tsv --profile personal
 GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
 
-> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the update
-> notice (v0.56.0; a banner on a terminal, one plain-text stderr line when piped)
-> would break the parse the day a newer version publishes.
-
 ## Exit codes
 
 Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
@@ -2773,7 +2647,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 - A migration fails or the migration checksum drifts from what the installed version expects.
 - The database has a **newer schema** than the installed gflow-cli (i.e. you downgraded after a migration already ran).
 
-Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`gflow update`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
+Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema ([Upgrading](#upgrading)), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
 exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem

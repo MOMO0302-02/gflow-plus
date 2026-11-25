@@ -15,7 +15,6 @@ import structlog
 from pydantic import ValidationError as PydanticValidationError
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
 from rich.table import Table
 
 from gflow_cli import __version__, json_output, profile_store, telemetry, telemetry_upload
@@ -48,44 +47,13 @@ from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
 from gflow_cli.cli_telemetry import telemetry as _telemetry_group
 from gflow_cli.cli_tools import tools as _tools_group
-from gflow_cli.cli_update import update as _update_command
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
 from gflow_cli.plus.cli_plus import plus as _plus_group
-from gflow_cli.update_check import UpdateNotice, maybe_notify_update
 
 logger = structlog.get_logger(__name__)
 console = Console()
-
-
-def _stderr_is_terminal() -> bool:
-    # The literal gate the docs promise ("one line when piped"). Rich's own
-    # `is_terminal` says True under FORCE_COLOR even when piped, which would
-    # put a 6-line panel into a `2>&1 | jq` stream.
-    return sys.stderr.isatty()
-
-
-def _print_update_notice(notice: UpdateNotice) -> None:
-    """Claude-Code-style banner on stderr when it is a terminal; the one-line
-    form when piped, so a log file or a `2>&1 | jq` stays one line per event.
-    Rich substitutes ASCII box glyphs where the console codec cannot draw
-    them (Windows cp1252), so this is safe without PYTHONUTF8."""
-    if not _stderr_is_terminal():
-        click.secho(notice.text, err=True, fg="yellow")
-        return
-    # `latest` is a PyPI-fetched string; fetch_latest() admits only version
-    # characters, and escape() keeps a stray `[` from becoming Rich markup.
-    latest, installed = escape(notice.latest), escape(notice.installed)
-    body = (
-        f"[bold]gflow-cli {latest}[/bold] is available (installed {installed}).\n"
-        "Run [bold cyan]gflow update[/bold cyan] to upgrade.\n"
-        f"[dim]Release notes: {escape(notice.release_url)}\n"
-        "Set GFLOW_CLI_UPDATE_CHECK=0 to silence this notice.[/dim]"
-    )
-    Console(stderr=True).print(
-        Panel(body, title="Update available", border_style="yellow", expand=False)
-    )
 
 
 def _default_marker_glyph(encoding: str | None) -> str:
@@ -218,15 +186,6 @@ def main(ctx: click.Context, verbose: bool) -> None:
             err=True,
             fg="yellow",
         )
-    # #479: once-a-day PyPI update notice. Best-effort and cache-served — it
-    # never blocks (a stale cache refreshes on a daemon thread for the next
-    # run) and never raises; stderr so piped/JSON stdout stays clean.
-    # #1163: never show the cached banner on `gflow update` (or `gflow update --check`),
-    # which does its own live PyPI query and would contradict the result.
-    if ctx.invoked_subcommand != "update":
-        update_notice = maybe_notify_update()
-        if update_notice:
-            _print_update_notice(update_notice)
     if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
         notice_at_command = sys.argv[1:3]
         if notice_at_command not in (["auth", "login"], ["mcp", "setup"]):
@@ -724,7 +683,6 @@ main.add_command(_credits_group)
 main.add_command(_data_group)
 main.add_command(_doctor_command)
 main.add_command(_docs_command)
-main.add_command(_update_command)
 main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)

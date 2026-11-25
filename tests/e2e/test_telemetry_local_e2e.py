@@ -69,7 +69,7 @@ def installed_gflow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Instal
     )
     assert build_res.returncode == 0, f"uv build failed:\n{build_res.stderr}"
 
-    wheel_files = list(dist_dir.glob("gflow_cli-*.whl"))
+    wheel_files = list(dist_dir.glob("gflow_plus-*.whl"))
     assert len(wheel_files) == 1, f"Expected exactly 1 wheel in {dist_dir}, found: {wheel_files}"
     wheel_path = wheel_files[0]
 
@@ -113,7 +113,7 @@ def installed_gflow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Instal
             str(dist_dir),
             "--no-deps",
             "--reinstall",
-            "gflow-cli",
+            "gflow-plus",
         ],
         capture_output=True,
         text=True,
@@ -133,7 +133,7 @@ def installed_gflow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Instal
     telemetry_file = site_packages / "gflow_cli" / "telemetry.py"
     assert telemetry_file.is_file(), f"telemetry.py missing at {telemetry_file}"
 
-    direct_urls = list(site_packages.glob("gflow_cli-*.dist-info/direct_url.json"))
+    direct_urls = list(site_packages.glob("gflow_plus-*.dist-info/direct_url.json"))
     assert not direct_urls, f"direct_url.json found (expected index-style install): {direct_urls}"
 
     # 4. Yield installed binaries
@@ -151,7 +151,6 @@ def clean_home(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         if not k.startswith("GFLOW_CLI_") and k != "DO_NOT_TRACK"
     }
     env["GFLOW_CLI_HOME"] = str(home)
-    env["GFLOW_CLI_UPDATE_CHECK"] = "0"
     env["PYTHONUTF8"] = "1"
     return home, env
 

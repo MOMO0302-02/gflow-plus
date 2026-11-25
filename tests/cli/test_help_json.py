@@ -61,7 +61,6 @@ EXPECTED_TREE: dict[str, bool] = {
     "data sync": False,
     "doctor": False,
     "docs": False,
-    "update": False,
     "movie template": False,
     "movie run": True,
     "project list": False,

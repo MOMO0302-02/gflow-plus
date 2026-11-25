@@ -127,8 +127,8 @@ When the project converges on the hexagonal target above, modules graduate to la
 > `browser_manager.py`, `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`,
 > `errors.py`, `exceptions.py`, `file_integrity.py`, `image_batch.py`, `json_output.py`,
 > `media.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_lease.py`,
-> `profile_store.py`, `redaction.py`, `storage.py`, `update_check.py` (the once-a-day
-> notice and `gflow update`'s `run_update`; its Click surface is `cli_update.py`), and
+> `profile_store.py`, `redaction.py`, `storage.py`, `update_check.py` (how the install
+> was made, for telemetry and optional-extra hints), and
 > `winsec.py` (inventory refreshed for v0.73.2 — it had drifted again since the v0.56.0
 > refresh in #507; `AGENTS.md` carries the same list and is the one to diff against).
 > The DDD layout below was deferred indefinitely; converge toward it incrementally

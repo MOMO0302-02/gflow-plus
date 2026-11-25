@@ -340,7 +340,7 @@ def upload_disabled_reason() -> str | None:
             return "telemetry off"
         from gflow_cli import update_check
 
-        if update_check._in_ci():  # pyright: ignore[reportPrivateUsage]
+        if update_check.in_ci():
             return "CI"
         if not update_check._installed_from_index():  # pyright: ignore[reportPrivateUsage]
             return "not installed from a package index"
@@ -377,10 +377,7 @@ def maybe_show_notice() -> bool:
             return False
         from gflow_cli import update_check
 
-        if (
-            update_check._in_ci()  # pyright: ignore[reportPrivateUsage]
-            or _meta().get("notice_seen_version") == str(NOTICE_VERSION)
-        ):
+        if update_check.in_ci() or _meta().get("notice_seen_version") == str(NOTICE_VERSION):
             return False
         click.echo(NOTICE_TEXT_CONSENT if consent_region() else NOTICE_TEXT, err=True)
         _NOTICE_SHOWN_THIS_RUN = True  # pyright: ignore[reportConstantRedefinition]

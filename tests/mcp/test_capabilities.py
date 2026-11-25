@@ -110,7 +110,6 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "tools list": None,
     "tools run": None,
     "tools show": None,
-    "update": None,
     "video upscale": None,
     "video assemble": None,
     "plus health": "credits.balance",

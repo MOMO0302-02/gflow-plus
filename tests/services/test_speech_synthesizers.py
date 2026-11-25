@@ -558,18 +558,13 @@ def test_gemini_charged_is_no_only_when_nothing_was_sent(
     assert getattr(raised.value, "charged", None) == charged
 
 
-def test_edge_missing_extra_hint_follows_the_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_edge_missing_extra_hint_installs_from_github(monkeypatch: pytest.MonkeyPatch) -> None:
     from gflow_cli import update_check
 
     monkeypatch.setitem(sys.modules, "edge_tts", None)
     monkeypatch.setattr(update_check, "_installed_extras", lambda: ("patchright",))
-    monkeypatch.setattr(
-        update_check,
-        "installer",
-        lambda: update_check.Installer("uv", ("uv", "tool", "upgrade", "gflow-cli")),
-    )
 
     with pytest.raises(ConfigurationError) as raised:
         EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", None))
 
-    assert 'uv tool install --force "gflow-cli[patchright,tts]"' in raised.value.remediation_hint
+    assert '"gflow-plus[patchright,tts] @ git+https://github.com/' in raised.value.remediation_hint

@@ -23,7 +23,7 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "in_ci", lambda: False)
     monkeypatch.setattr(update_check, "_installed_from_index", lambda: True)
     monkeypatch.setenv("TZ", "America/New_York")
     monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
@@ -286,7 +286,7 @@ def test_upload_disabled_reason(
     home = Path.cwd() / "gflow_home"
     _enable_upload(home)
     if condition == "ci":
-        monkeypatch.setattr(update_check, "_in_ci", lambda: True)
+        monkeypatch.setattr(update_check, "in_ci", lambda: True)
     elif condition == "not_index":
         monkeypatch.setattr(update_check, "_installed_from_index", lambda: False)
     elif condition == "server_disabled":
@@ -350,7 +350,7 @@ def test_mcp_setup_shows_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 def test_notice_is_not_shown(case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     home = tmp_path / "gflow_home"
     if case == "ci":
-        monkeypatch.setattr(update_check, "_in_ci", lambda: True)
+        monkeypatch.setattr(update_check, "in_ci", lambda: True)
     elif case == "stderr_piped":
         monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
     elif case == "killed":

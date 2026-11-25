@@ -192,8 +192,7 @@ queued job locally and says plainly when Flow may still charge an already-submit
 - **`gflow update` in a Windows pip install keeps it working (#1298).** It renames the launchers
   aside before pip runs, and refuses with nothing changed while another gflow process holds
   one. `pip --user` installs upgrade with `--user`. Installs at 0.99.0 and below need one manual
-  upgrade, because their own updater still has the bug: the command is in
-  [USAGE § `gflow update`](USAGE.md#gflow-update).
+  upgrade, because their own updater still has the bug.
 - **`gflow character list` / `show` and their MCP twins work on flow.google.com** (#987 slice 2,
   ported from @ziyedbe).
 - **`video chain`:** `--out-file` writes the clips (#1293), and `--resume-from` continues the

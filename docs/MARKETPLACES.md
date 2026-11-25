@@ -49,8 +49,8 @@ Three console scripts are installed, all the same entry point: `gflow` (what you
 (short alias) and `gflow-cli` (named for the package, so `uvx gflow-cli mcp run` resolves — the
 MCP Registry builds exactly that form and has no field for a different executable name).
 
-Upgrades go through whichever installer put it there: `gflow update`. Source checkouts are
-refused with exit `11` on purpose.
+Upgrades reinstall from the GitHub repository: `uv pip install --python <venv python>
+--reinstall-package gflow-plus "gflow-plus @ git+https://github.com/MOMO0302-02/gflow-plus@vX.Y.Z"`.
 
 ### Claude Code plugin
 
