@@ -53,6 +53,10 @@ ensure_profile_engine_compatible(profile_dir, channel) -> None
     Raise ``ProfileEngineDowngradeError`` when the bundled Chromium about to
     open ``profile_dir`` is older than the Chromium that last wrote it (#477).
 
+ensure_translate_disabled(profile_dir) -> bool
+    Ensure Chrome's ``Default/Preferences`` sets ``translate.enabled = false``
+    so off-screen headed Chrome does not pop a translate bubble onto the desktop.
+
 Internal helpers (exported for tests)
 --------------------------------------
 _find_chrome_binary() -> str
@@ -65,8 +69,9 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -495,3 +500,68 @@ def ensure_profile_engine_compatible(profile_dir: Path, channel: str | None) -> 
     # Remedy lives in ProfileEngineDowngradeError._default_remediation — naming
     # it here too printed the remedy twice in the CLI human output.
     raise ProfileEngineDowngradeError(msg)
+
+
+def ensure_translate_disabled(profile_dir: Path) -> bool:
+    """Persist ``translate.enabled = false`` in Chrome's ``Default/Preferences``.
+
+    Chrome's ``--disable-features=Translate`` flag no longer suppresses the
+    "Translate this page?" bubble on newer builds (measured on Chrome 158 on
+    zh-CN Windows): even when the main window launches off-screen at
+    ``-30000,-30000``, Chrome clamps the owned translate bubble back onto the
+    visible desktop work area. Writing ``translate.enabled = false`` into
+    ``Default/Preferences`` disables the prompt at the source.
+
+    Returns ``True`` when the file was created or updated, ``False`` when
+    already disabled or when best-effort I/O fails (never aborts a launch).
+    """
+    prefs_path = profile_dir / "Default" / "Preferences"
+    data: dict[str, Any]
+    try:
+        if prefs_path.exists():
+            parsed = json.loads(prefs_path.read_text(encoding="utf-8"))
+            if not isinstance(parsed, dict):
+                log.warning(
+                    "browser_manager.preferences_not_object",
+                    prefs_path=str(prefs_path),
+                )
+                return False
+            data = cast("dict[str, Any]", parsed)
+            raw_translate = data.get("translate")
+            if isinstance(raw_translate, dict):
+                translate_cfg = cast("dict[str, Any]", raw_translate)
+                if translate_cfg.get("enabled") is False:
+                    return False
+            else:
+                translate_cfg = {}
+                data["translate"] = translate_cfg
+            translate_cfg["enabled"] = False
+        else:
+            prefs_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {"translate": {"enabled": False}}
+
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=prefs_path.parent,
+                prefix=".Preferences.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                tmp_path = Path(handle.name)
+                json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+            os.replace(tmp_path, prefs_path)
+            return True
+        except BaseException:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            raise
+    except (OSError, ValueError) as exc:
+        log.warning(
+            "browser_manager.disable_translate_failed",
+            prefs_path=str(prefs_path),
+            error=type(exc).__name__,
+        )
+        return False

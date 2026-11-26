@@ -219,6 +219,7 @@ class UiAutomationTransport(VideoGenerationMixin, ImageGenerationMixin):
                 channel_for_profile,
                 disable_features_args,
                 ensure_profile_engine_compatible,
+                ensure_translate_disabled,
                 window_position_args,
             )
             from gflow_cli.config import get_settings
@@ -233,6 +234,7 @@ class UiAutomationTransport(VideoGenerationMixin, ImageGenerationMixin):
             # #477: refuse a bundled-Chromium open of a profile last written by
             # a newer Chromium — downgrade cleanup can shred the session store.
             ensure_profile_engine_compatible(profile_dir, channel)
+            ensure_translate_disabled(profile_dir)
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,

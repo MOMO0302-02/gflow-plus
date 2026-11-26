@@ -78,6 +78,7 @@ from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
     disable_features_args,
+    ensure_translate_disabled,
     profile_in_use_error,
     window_position_args,
 )
@@ -447,6 +448,9 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         # We own the profile now — one-time Windows DACL sweep for profiles
         # created before #472 (marker-gated stat afterwards; no-op off Windows).
         ensure_profile_hardened(self.profile_dir)
+        # Prevent off-screen Chrome from clamping a "Translate this page?" bubble
+        # onto the user's desktop on non-English OS locales.
+        ensure_translate_disabled(self.profile_dir)
         self._context = await self._launch_persistent_context(kwargs)
         # Attach journal listeners BEFORE any navigation/submission that can
         # produce relevant traffic (design §6.2 step 2, S30).

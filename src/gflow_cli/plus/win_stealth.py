@@ -34,6 +34,7 @@ log = structlog.get_logger(__name__)
 
 _OFFSCREEN_THRESHOLD = -10000
 _GWL_EXSTYLE = -20
+_GW_OWNER = 4
 _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_APPWINDOW = 0x00040000
 _SW_HIDE = 0
@@ -64,6 +65,28 @@ def is_allowed_process_image(image_path: str) -> bool:
 def compute_stealth_exstyle(current_exstyle: int) -> int:
     """Return extended window style that removes a window from the taskbar."""
     return (current_exstyle | _WS_EX_TOOLWINDOW) & ~_WS_EX_APPWINDOW
+
+
+def find_leaked_owned_popups(
+    windows: list[tuple[int, int, int, int]],
+    offscreen_owners: set[int],
+) -> list[int]:
+    """Return HWNDs of on-screen Chrome popups owned by an off-screen Chrome window.
+
+    Chrome clamps owned bubble dialogs (e.g. "Translate this page?", save-password,
+    restore-pages) back onto the visible desktop work area even when the owning
+    browser window is placed at ``-30000,-30000``. Each tuple in ``windows`` is
+    ``(hwnd, owner_hwnd, left, top)``.
+    """
+    leaked: list[int] = []
+    for hwnd, owner, left, top in windows:
+        if (
+            owner in offscreen_owners
+            and hwnd not in offscreen_owners
+            and not is_offscreen_rect(left, top)
+        ):
+            leaked.append(hwnd)
+    return leaked
 
 
 def hide_offscreen_chrome_windows() -> int:
@@ -123,12 +146,13 @@ def _win32_hide_offscreen_chrome() -> int:
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     hidden_count = 0
+    chrome_windows: list[tuple[int, int, int, int]] = []
+    offscreen_owners: set[int] = set()
 
     winfunctype: Any = getattr(ctypes, "WINFUNCTYPE")  # noqa: B009
     enum_proc_type = winfunctype(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def _callback(hwnd: int, _lparam: int) -> bool:
-        nonlocal hidden_count
         if not user32.IsWindowVisible(hwnd):
             return True
         # Minimized Windows apps report GetWindowRect == (-32000, -32000) while
@@ -147,32 +171,39 @@ def _win32_hide_offscreen_chrome() -> int:
         rect = wintypes.RECT()
         if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
             return True
-        if not is_offscreen_rect(int(rect.left), int(rect.top)):
-            return True
-
-        cur_style = int(user32.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE))
-        new_style = compute_stealth_exstyle(cur_style)
-        if new_style != cur_style:
-            # Windows Explorer only drops the taskbar button when the window
-            # briefly hides while WS_EX_TOOLWINDOW is applied, then re-shows
-            # without stealing focus (SW_SHOWNOACTIVATE).
-            user32.ShowWindow(hwnd, _SW_HIDE)
-            user32.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, new_style)
-            user32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
-            hidden_count += 1
-
-        flash = _FLASHWINFO(
-            cbSize=ctypes.sizeof(_FLASHWINFO),
-            hwnd=hwnd,
-            dwFlags=_FLASHW_STOP,
-            uCount=0,
-            dwTimeout=0,
-        )
-        user32.FlashWindowEx(ctypes.byref(flash))
+        owner = int(user32.GetWindow(hwnd, _GW_OWNER) or 0)
+        left, top = int(rect.left), int(rect.top)
+        chrome_windows.append((int(hwnd), owner, left, top))
+        if is_offscreen_rect(left, top):
+            offscreen_owners.add(int(hwnd))
         return True
 
     try:
         user32.EnumWindows(enum_proc_type(_callback), 0)
+        for hwnd in offscreen_owners:
+            cur_style = int(user32.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE))
+            new_style = compute_stealth_exstyle(cur_style)
+            if new_style != cur_style:
+                # Windows Explorer only drops the taskbar button when the window
+                # briefly hides while WS_EX_TOOLWINDOW is applied, then re-shows
+                # without stealing focus (SW_SHOWNOACTIVATE).
+                user32.ShowWindow(hwnd, _SW_HIDE)
+                user32.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, new_style)
+                user32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
+                hidden_count += 1
+
+            flash = _FLASHWINFO(
+                cbSize=ctypes.sizeof(_FLASHWINFO),
+                hwnd=hwnd,
+                dwFlags=_FLASHW_STOP,
+                uCount=0,
+                dwTimeout=0,
+            )
+            user32.FlashWindowEx(ctypes.byref(flash))
+
+        for popup_hwnd in find_leaked_owned_popups(chrome_windows, offscreen_owners):
+            user32.ShowWindow(popup_hwnd, _SW_HIDE)
+            hidden_count += 1
     except Exception as exc:  # noqa: BLE001 — stealth must never abort a generation
         log.debug("plus.win_stealth.enum_failed", exc_info=exc)
     return hidden_count

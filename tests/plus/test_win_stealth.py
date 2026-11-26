@@ -8,6 +8,7 @@ from gflow_cli.plus.win_stealth import (
     _WS_EX_APPWINDOW,
     _WS_EX_TOOLWINDOW,
     compute_stealth_exstyle,
+    find_leaked_owned_popups,
     is_allowed_process_image,
     is_offscreen_rect,
     is_stealth_enabled,
@@ -47,3 +48,20 @@ def test_allowed_process_image_only_matches_chrome_and_chromium() -> None:
     assert is_allowed_process_image(r"C:\Program Files\TencentDocs\TencentDocs.exe") is False
     assert is_allowed_process_image(r"D:\Apps\Feishu\Feishu.exe") is False
     assert is_allowed_process_image("") is False
+
+
+def test_find_leaked_owned_popups_matches_only_onscreen_children_of_offscreen_chrome() -> None:
+    offscreen_main = 1001
+    user_main = 2001
+    windows = [
+        # Off-screen gflow main Chrome window
+        (offscreen_main, 0, -30000, -30000),
+        # Translate bubble clamped by Chrome onto the visible desktop (0, 0)
+        (1002, offscreen_main, 0, 0),
+        # Another popup already off-screen does not need hiding
+        (1003, offscreen_main, -29500, -29500),
+        # User's own foreground Chrome window and its translate bubble must stay untouched
+        (user_main, 0, 100, 100),
+        (2002, user_main, 120, 140),
+    ]
+    assert find_leaked_owned_popups(windows, {offscreen_main}) == [1002]

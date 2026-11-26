@@ -766,3 +766,57 @@ class TestDisableFeaturesArgs:
             assert [a for a in args if a.startswith("--disable-features")] == [
                 "--disable-features=CloudSyncedFolderChecker"
             ]
+
+
+class TestEnsureTranslateDisabled:
+    def test_creates_preferences_when_missing(self, tmp_path: Path) -> None:
+        import json
+
+        from gflow_cli.browser_manager import ensure_translate_disabled
+
+        assert ensure_translate_disabled(tmp_path) is True
+        prefs = tmp_path / "Default" / "Preferences"
+        assert prefs.is_file()
+        assert json.loads(prefs.read_text(encoding="utf-8")) == {"translate": {"enabled": False}}
+
+    def test_updates_existing_preferences_preserving_other_keys(self, tmp_path: Path) -> None:
+        import json
+
+        from gflow_cli.browser_manager import ensure_translate_disabled
+
+        prefs = tmp_path / "Default" / "Preferences"
+        prefs.parent.mkdir(parents=True)
+        prefs.write_text(
+            json.dumps(
+                {
+                    "intl": {"selected_languages": "zh-CN,zh"},
+                    "translate": {"recent_target": "zh-CN"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert ensure_translate_disabled(tmp_path) is True
+        data = json.loads(prefs.read_text(encoding="utf-8"))
+        assert data["intl"] == {"selected_languages": "zh-CN,zh"}
+        assert data["translate"] == {"recent_target": "zh-CN", "enabled": False}
+
+    def test_idempotent_when_already_disabled(self, tmp_path: Path) -> None:
+        import json
+
+        from gflow_cli.browser_manager import ensure_translate_disabled
+
+        prefs = tmp_path / "Default" / "Preferences"
+        prefs.parent.mkdir(parents=True)
+        original = json.dumps({"translate": {"enabled": False}})
+        prefs.write_text(original, encoding="utf-8")
+        assert ensure_translate_disabled(tmp_path) is False
+        assert prefs.read_text(encoding="utf-8") == original
+
+    def test_corrupt_preferences_is_best_effort_noop(self, tmp_path: Path) -> None:
+        from gflow_cli.browser_manager import ensure_translate_disabled
+
+        prefs = tmp_path / "Default" / "Preferences"
+        prefs.parent.mkdir(parents=True)
+        prefs.write_text("{not valid json", encoding="utf-8")
+        assert ensure_translate_disabled(tmp_path) is False
+        assert prefs.read_text(encoding="utf-8") == "{not valid json"
