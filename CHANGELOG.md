@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-26
+
 ### Fixed
 
 - **Suppress off-screen Chrome "Translate this page?" desktop popups**: write `translate.enabled = false` into `Default/Preferences` before launching headed generation contexts (`FlowApiClient` and `UiAutomationTransport`) because Chrome 158 ignores `--disable-features=Translate`, and have Windows `win_stealth` hide any on-screen Chrome bubble whose `GW_OWNER` is an off-screen Chrome window.
