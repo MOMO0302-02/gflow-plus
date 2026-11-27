@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-27
+
 ### gflow-plus
 
 - **Sticky primary profile per egress (`GFLOW_PLUS_STICKY_PROFILE_PER_EGRESS=1`)**: keeps work on one healthy primary account per egress IP instead of round-robin switching across accounts on the same IP, cutting multi-account farm signals while failing over cleanly when the primary cools down or runs low on credits.

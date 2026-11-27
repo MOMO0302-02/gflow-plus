@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Deliberately NOT pinned: google-chrome-stable. Chrome's apt repo keeps only the current
 # build, so a pinned version stops resolving within weeks. The trade-off is that this
 # layer caches indefinitely and a rebuild is what picks up a newer Chrome.
-ARG GFLOW_VERSION=1.3.0
+ARG GFLOW_VERSION=1.4.0
 RUN pip install --no-cache-dir "gflow-plus @ https://github.com/MOMO0302-02/gflow-plus/archive/refs/tags/v${GFLOW_VERSION}.tar.gz"
 
 VOLUME ["/data"]
