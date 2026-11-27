@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-27
+
 ### gflow-plus
 
 - **Per-profile residential proxy binding (`set_proxy` / `clear_proxy` / `GFLOW_PLUS_PROFILE_PROXIES`)**: bind independent `http://`, `https://`, or `socks5://` proxies per account at runtime (persisted in `plus_state.db`, zero restart) or via env var; automatically evicts warm browsers on route change, routes credit reads/renewals through the bound proxy, and prevents `DirectHttpTransport` from bypassing per-profile proxies via direct host HTTP.
