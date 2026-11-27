@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
+from gflow_cli.errors import QueueSchemaError
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.server import server
 from gflow_cli.plus.pool.manager import PoolJobManager, get_pool_manager
@@ -208,14 +209,17 @@ async def gflow_plus_submit_image(
         payload["project_name"] = project_name
 
     task_type = "i2i" if ref_paths else "t2i"
-    job = await _pool().submit_job(
-        kind="image",
-        task_type=task_type,
-        payload=payload,
-        label=label,
-        preferred_profile=profile,
-        skip_if_exists=skip_if_exists,
-    )
+    try:
+        job = await _pool().submit_job(
+            kind="image",
+            task_type=task_type,
+            payload=payload,
+            label=label,
+            preferred_profile=profile,
+            skip_if_exists=skip_if_exists,
+        )
+    except QueueSchemaError as exc:
+        return common._bad_param("Invalid Image Request", exc.detail or str(exc))  # pyright: ignore[reportPrivateUsage]
     return {"status": "ok", "job": job.to_public_dict()}
 
 
@@ -273,7 +277,9 @@ async def gflow_plus_submit_video(
     if (refused := _confine_outputs(outputs)) is not None:
         return refused
     resolved_mode: str = mode or (
-        "i2v" if start_image else ("r2v" if (reference_images or reference_entities) else "t2v")
+        "i2v"
+        if (start_image or end_image)
+        else ("r2v" if (reference_images or reference_entities) else "t2v")
     )
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -298,14 +304,17 @@ async def gflow_plus_submit_video(
         if val is not None:
             payload[key] = val
 
-    job = await _pool().submit_job(
-        kind="video",
-        task_type=resolved_mode,
-        payload=payload,
-        label=label,
-        preferred_profile=profile,
-        skip_if_exists=skip_if_exists,
-    )
+    try:
+        job = await _pool().submit_job(
+            kind="video",
+            task_type=resolved_mode,
+            payload=payload,
+            label=label,
+            preferred_profile=profile,
+            skip_if_exists=skip_if_exists,
+        )
+    except QueueSchemaError as exc:
+        return common._bad_param("Invalid Video Request", exc.detail or str(exc))  # pyright: ignore[reportPrivateUsage]
     return {"status": "ok", "job": job.to_public_dict()}
 
 
@@ -351,8 +360,9 @@ async def gflow_plus_submit_batch(
             batch_id=batch_id,
             skip_if_exists=skip_if_exists,
         )
-    except ValueError as exc:
-        return common._bad_param("Invalid Batch Workflow", str(exc))  # pyright: ignore[reportPrivateUsage]
+    except (ValueError, QueueSchemaError) as exc:
+        detail = exc.detail if isinstance(exc, QueueSchemaError) and exc.detail else str(exc)
+        return common._bad_param("Invalid Batch Workflow", detail)  # pyright: ignore[reportPrivateUsage]
     return {"status": "ok", **result}
 
 

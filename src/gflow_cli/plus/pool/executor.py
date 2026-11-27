@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.transports.migrated_video_upscale import VALID_VIDEO_SCALES
@@ -179,6 +179,77 @@ def _validate_media_edit_payload(
     return out
 
 
+def _validate_local_media_paths(payload: dict[str, Any], *, allow_job_refs: bool) -> None:
+    """Reject missing or empty local image paths BEFORE launching Chrome or consuming WAF budget."""
+    for field_name in ("start_image", "end_image"):
+        raw = payload.get(field_name)
+        if not raw:
+            continue
+        if allow_job_refs and is_job_ref(raw):
+            continue
+        path = Path(str(raw))
+        if not path.is_file():
+            raise QueueSchemaError(f"{field_name} file not found: {path}")
+        if path.stat().st_size == 0:
+            raise QueueSchemaError(f"{field_name} file is empty: {path}")
+
+    for field_name in ("ref_paths", "reference_images"):
+        raw_list = payload.get(field_name)
+        if not raw_list:
+            continue
+        if not isinstance(raw_list, (list, tuple)):
+            raise QueueSchemaError(f"{field_name} must be a list of file paths")
+        entries = cast("Sequence[object]", raw_list)
+        for idx, entry in enumerate(entries):
+            if allow_job_refs and is_job_ref(entry):
+                continue
+            path = Path(str(entry))
+            if not path.is_file():
+                raise QueueSchemaError(f"{field_name}[{idx}] file not found: {path}")
+            if path.stat().st_size == 0:
+                raise QueueSchemaError(f"{field_name}[{idx}] file is empty: {path}")
+
+
+def _validate_pre_submit_semantics(
+    task_type: str,
+    payload: dict[str, Any],
+    *,
+    allow_job_refs: bool,
+) -> None:
+    """Catch common argument mistakes upfront before any browser launch."""
+    entities = payload.get("reference_entities")
+    entity_names = payload.get("reference_entity_names")
+    if entities and entity_names and len(entities) != len(entity_names):
+        raise QueueSchemaError(
+            "reference_entities and reference_entity_names must have the same length "
+            f"({len(entities)} vs {len(entity_names)})"
+        )
+
+    if task_type in ("t2v", "i2v", "r2v"):
+        has_start = bool(
+            payload.get("start_image")
+            or payload.get("start_image_ref")
+            or payload.get("start_image_ref_name")
+        )
+        has_end = bool(
+            payload.get("end_image")
+            or payload.get("end_image_ref")
+            or payload.get("end_image_ref_name")
+        )
+        if has_end and not has_start:
+            raise QueueSchemaError("end_image requires start_image (first-last frame i2v)")
+        if task_type == "i2v" and not has_start:
+            raise QueueSchemaError("i2v video mode requires start_image")
+        if task_type == "r2v" and not (
+            payload.get("reference_images")
+            or payload.get("ref_names")
+            or payload.get("reference_entities")
+        ):
+            raise QueueSchemaError("r2v video mode requires reference_images or reference_entities")
+
+    _validate_local_media_paths(payload, allow_job_refs=allow_job_refs)
+
+
 def validate_payload(
     task_type: str,
     payload: dict[str, Any],
@@ -188,6 +259,7 @@ def validate_payload(
     """Validate and normalize a generation, upscale, or extend payload."""
     if task_type in MEDIA_EDIT_TASK_TYPES:
         return _validate_media_edit_payload(task_type, payload, allow_job_refs=allow_job_refs)
+    _validate_pre_submit_semantics(task_type, payload, allow_job_refs=allow_job_refs)
     if allow_job_refs and payload_has_job_refs(payload):
         prompt = str(payload.get("prompt") or "").strip()
         if not prompt:
@@ -197,10 +269,19 @@ def validate_payload(
     return codec.encode_payload(task_type, decoded)
 
 
+def _settings_with_proxy(proxy: str | None) -> Any:
+    settings = get_settings()
+    if proxy and proxy != settings.browser_proxy:
+        return settings.model_copy(update={"browser_proxy": proxy})
+    return settings
+
+
 async def execute_via_worker(
     profile: str,
     task_type: str,
     payload: dict[str, Any],
+    *,
+    proxy: str | None = None,
 ) -> ExecutionOutcome:
     """Execute one generation, upscale, or extend payload on ``profile``."""
     try:
@@ -216,9 +297,9 @@ async def execute_via_worker(
         )
 
     if task_type in MEDIA_EDIT_TASK_TYPES:
-        return await _execute_media_edit(profile, task_type, encoded)
+        return await _execute_media_edit(profile, task_type, encoded, proxy=proxy)
 
-    settings = get_settings()
+    settings = _settings_with_proxy(proxy)
     db_path = settings.db_path or (settings.home / "gflow.db")
     task_id = f"plus-{uuid.uuid4().hex[:12]}"
     claimant = f"plus:{profile}:{os.getpid()}"
@@ -232,13 +313,18 @@ async def execute_via_worker(
         out_dir: Path,
         settings: Any = None,
     ) -> Any:
+        effective = settings
+        if proxy:
+            base = settings if settings is not None else get_settings()
+            if getattr(base, "browser_proxy", None) != proxy:
+                effective = base.model_copy(update={"browser_proxy": proxy})
         return browser_pool.checkout(
             profile,
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
             out_dir=out_dir,
-            settings=settings,
+            settings=effective,
         )
 
     worker = FlowWorker(
@@ -375,9 +461,11 @@ async def _execute_media_edit(
     profile: str,
     task_type: str,
     payload: dict[str, Any],
+    *,
+    proxy: str | None = None,
 ) -> ExecutionOutcome:
     """Execute ``upscale_image``, ``upscale_video``, or ``extend_video`` via WarmBrowserPool."""
-    settings = get_settings()
+    settings = _settings_with_proxy(proxy)
     media_id = str(payload["media_id"])
     project_id = str(payload.get("project_id") or "").strip() or lookup_project_in_catalog(
         media_id, profile

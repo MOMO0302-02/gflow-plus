@@ -623,6 +623,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
             record_generation_request=(
                 rec.record_generation_request if rec is not None and rec.enabled else None
             ),
+            browser_proxy=self.settings.browser_proxy,
         )
 
     def _apply_transport_setup(

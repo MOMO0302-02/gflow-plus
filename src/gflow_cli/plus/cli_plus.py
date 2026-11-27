@@ -57,6 +57,7 @@ def plus_health(refresh: bool, renew: bool, as_json: bool) -> None:
     table.add_column("Profile", style="cyan")
     table.add_column("Healthy")
     table.add_column("Credits", justify="right")
+    table.add_column("Egress")
     table.add_column("Busy")
     table.add_column("Cooldown")
     table.add_column("Last Error")
@@ -66,6 +67,7 @@ def plus_health(refresh: bool, renew: bool, as_json: bool) -> None:
             str(item["profile"]),
             "[green]yes[/green]" if item["healthy"] else "[red]no[/red]",
             str(item["credits"]) if item["credits"] is not None else "?",
+            str(item.get("egress_group") or "direct"),
             "yes" if item["busy"] else "no",
             cd,
             str(item["last_error"] or "-"),
@@ -264,12 +266,32 @@ def pool_retry(
 @pool_group.command("profile-control")
 @click.argument(
     "action",
-    type=click.Choice(["clear_cooldown", "renew", "exclude", "include", "close_browser"]),
+    type=click.Choice(
+        [
+            "clear_cooldown",
+            "renew",
+            "exclude",
+            "include",
+            "close_browser",
+            "set_proxy",
+            "clear_proxy",
+        ]
+    ),
 )
 @click.option("--profile", default=None, help="Target profile name (or '*' for all).")
+@click.option(
+    "--proxy",
+    default=None,
+    help="Proxy URL for set_proxy (http://host:port, https://host:port, or socks5://host:port).",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON.")
-def pool_profile_control(action: str, profile: str | None, as_json: bool) -> None:
-    """Clear cooldowns, renew sessions, toggle account participation, or close warm browsers."""
+def pool_profile_control(
+    action: str,
+    profile: str | None,
+    proxy: str | None,
+    as_json: bool,
+) -> None:
+    """Clear cooldowns, renew sessions, bind per-profile proxies, or close warm browsers."""
 
     async def _run() -> dict[str, Any]:
         scheduler = get_pool_manager().scheduler
@@ -278,8 +300,25 @@ def pool_profile_control(action: str, profile: str | None, as_json: bool) -> Non
         if action == "close_browser":
             closed = await scheduler.close_warm_browsers(profile)
             return {"status": "ok", "action": action, "closed": closed}
+        if action == "clear_proxy":
+            cleared = await scheduler.clear_proxy(profile)
+            return {"status": "ok", "action": action, "cleared": cleared}
         if not profile or profile == "*":
             raise click.BadParameter(f"action={action!r} requires --profile <name>")
+        if action == "set_proxy":
+            if not proxy or not proxy.strip():
+                raise click.BadParameter("action='set_proxy' requires --proxy <scheme://host:port>")
+            try:
+                normalized = await scheduler.set_proxy(profile, proxy)
+            except ValueError as exc:
+                raise click.BadParameter(str(exc), param_hint="'--proxy'") from exc
+            return {
+                "status": "ok",
+                "action": action,
+                "profile": profile,
+                "proxy": normalized,
+                "egress_group": normalized,
+            }
         if action == "exclude":
             scheduler.set_disabled(profile, disabled=True)
             await scheduler.close_warm_browsers(profile)

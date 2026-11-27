@@ -138,7 +138,12 @@ async def _await_labs_refresh(page: Any, source: str) -> bool | None:
         await asyncio.sleep(_LABS_POLL_INTERVAL_S)
 
 
-async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewResult:
+async def renew_profile(
+    profile_dir: Path,
+    *,
+    source: str = "renew",
+    proxy: str | None = None,
+) -> RenewResult:
     """Refresh ``profile_dir``'s session headlessly and report what was observed.
 
     Raises ``ProfileLockedError`` when another gflow process holds the profile
@@ -185,7 +190,9 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
                     "--disable-dev-shm-usage",
                     *disable_features_args(BrowserEngine.PLAYWRIGHT),
                 ],
-                **browser_proxy_kwargs(get_settings().browser_proxy),
+                **browser_proxy_kwargs(
+                    proxy if proxy is not None else get_settings().browser_proxy
+                ),
             )
             try:
                 await ctx.add_init_script(

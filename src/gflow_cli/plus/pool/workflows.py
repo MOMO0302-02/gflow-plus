@@ -9,6 +9,7 @@ using ``job:<label>`` references in path or ``media_id`` fields, plus explicit
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from difflib import get_close_matches
 from typing import Any, cast
 
 from gflow_cli.plus.pool.models import JobKind, PoolJob
@@ -16,6 +17,81 @@ from gflow_cli.plus.pool.models import JobKind, PoolJob
 JOB_REF_PREFIX = "job:"
 _PATH_REF_FIELDS = ("start_image", "end_image")
 _LIST_REF_FIELDS = ("ref_paths", "reference_images")
+
+_COMMON_BATCH_KEYS: frozenset[str] = frozenset(
+    {
+        "kind",
+        "mode",
+        "task_type",
+        "label",
+        "profile",
+        "depends_on",
+        "skip_if_exists",
+        "out_file",
+        "output_file",
+        "out_dir",
+        "project_id",
+        "project_name",
+    }
+)
+_IMAGE_BATCH_KEYS: frozenset[str] = _COMMON_BATCH_KEYS | frozenset(
+    {
+        "prompt",
+        "aspect",
+        "model",
+        "count",
+        "ref_paths",
+        "reference_images",
+        "refs",
+        "reference_entities",
+        "reference_entity_names",
+    }
+)
+_VIDEO_BATCH_KEYS: frozenset[str] = _COMMON_BATCH_KEYS | frozenset(
+    {
+        "prompt",
+        "aspect",
+        "model",
+        "count",
+        "duration",
+        "max_credits",
+        "start_image",
+        "initial_frame",
+        "end_image",
+        "reference_images",
+        "reference_entities",
+        "reference_entity_names",
+        "resolution",
+    }
+)
+_UPSCALE_BATCH_KEYS: frozenset[str] = _COMMON_BATCH_KEYS | frozenset(
+    {"media_id", "media_kind", "scale", "project"}
+)
+_EXTEND_BATCH_KEYS: frozenset[str] = _COMMON_BATCH_KEYS | frozenset(
+    {"media_id", "prompt", "aspect", "max_credits", "project"}
+)
+
+
+def _reject_unknown_keys(
+    item: dict[str, Any],
+    allowed: frozenset[str],
+    *,
+    kind_label: str,
+) -> None:
+    """Fail fast on misspelled batch item keys instead of silently dropping them."""
+    unknown = sorted(k for k in item if k not in allowed)
+    if not unknown:
+        return
+    hints: list[str] = []
+    allowed_list = sorted(allowed)
+    for key in unknown:
+        suggestion = get_close_matches(key, allowed_list, n=1, cutoff=0.55)
+        if suggestion:
+            hints.append(f"{key!r} (did you mean {suggestion[0]!r}?)")
+        else:
+            hints.append(repr(key))
+    msg = f"Unknown field(s) for {kind_label} batch item: {', '.join(hints)}"
+    raise ValueError(msg)
 
 
 def is_job_ref(value: object) -> bool:
@@ -178,17 +254,27 @@ def parse_batch_item(
         "upscale_image",
         "upscale_video",
     ):
+        _reject_unknown_keys(item, _UPSCALE_BATCH_KEYS, kind_label="upscale")
         task_type = _infer_upscale_task_type(item, raw_kind, raw_mode, upstream_kind)
         return "upscale", task_type, _extract_upscale_payload(item, task_type)
 
     if raw_kind in ("extend", "extend_video") or raw_mode in ("extend", "extend_video"):
+        _reject_unknown_keys(item, _EXTEND_BATCH_KEYS, kind_label="extend")
         return "extend", "extend_video", _extract_extend_payload(item)
 
     if raw_kind == "image" or raw_mode in ("t2i", "i2i"):
+        _reject_unknown_keys(item, _IMAGE_BATCH_KEYS, kind_label="image")
         has_refs = bool(item.get("ref_paths") or item.get("refs") or item.get("reference_images"))
         task_type = raw_mode if raw_mode in ("t2i", "i2i") else ("i2i" if has_refs else "t2i")
         return "image", task_type, _extract_image_payload(item)
 
+    if raw_kind and raw_kind != "video":
+        msg = (
+            f"Unknown batch item kind {raw_kind!r}; expected one of "
+            "'image', 'video', 'upscale_image', 'upscale_video', 'upscale', 'extend_video'"
+        )
+        raise ValueError(msg)
+    _reject_unknown_keys(item, _VIDEO_BATCH_KEYS, kind_label="video")
     mode = raw_mode if raw_mode in ("t2v", "i2v", "r2v") else _infer_video_mode(item)
     return "video", mode, _extract_video_payload(item, mode)
 
@@ -219,7 +305,7 @@ def _infer_upscale_task_type(
 
 
 def _infer_video_mode(item: dict[str, Any]) -> str:
-    if item.get("start_image") or item.get("initial_frame"):
+    if item.get("start_image") or item.get("initial_frame") or item.get("end_image"):
         return "i2v"
     if item.get("reference_images") or item.get("reference_entities"):
         return "r2v"
@@ -227,9 +313,12 @@ def _infer_video_mode(item: dict[str, Any]) -> str:
 
 
 def _extract_image_payload(item: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(item.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("image batch item requires a non-empty 'prompt'")
     ref_paths = list(item.get("ref_paths") or item.get("reference_images") or [])
     payload: dict[str, Any] = {
-        "prompt": item["prompt"],
+        "prompt": prompt,
         "aspect": item.get("aspect", "9:16"),
         "model": item.get("model", "nano2"),
         "count": int(item.get("count", 1)),
@@ -253,8 +342,11 @@ def _extract_image_payload(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_video_payload(item: dict[str, Any], mode: str) -> dict[str, Any]:
+    prompt = str(item.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("video batch item requires a non-empty 'prompt'")
     payload: dict[str, Any] = {
-        "prompt": item["prompt"],
+        "prompt": prompt,
         "mode": mode,
         "aspect": item.get("aspect", "9:16"),
         "model": item.get("model", "omni-1.2-flash"),

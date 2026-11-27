@@ -23,6 +23,8 @@ def _make_manager(tmp_path: Path, executor: Any) -> PoolJobManager:
     settings = PlusSettings(
         state_db_path=tmp_path / "plus_state.db",
         stagger_seconds=0.0,
+        egress_min_interval_s=0.0,
+        max_concurrent_per_egress=0,
         rate_limit_cooldown_s=60.0,
         transient_cooldown_s=15.0,
         max_failover_attempts=3,

@@ -227,6 +227,9 @@ class PoolJobManager:
         skip_if_exists: bool = True,
     ) -> dict[str, Any]:
         """Submit a batch (or dependency DAG) of items across all healthy lanes."""
+        if not items:
+            msg = "Batch items must not be empty"
+            raise ValueError(msg)
         resolved_batch = batch_id or f"batch-{uuid.uuid4().hex[:8]}"
         prepared = self._prepare_batch_items(items, skip_if_exists=skip_if_exists)
         jobs: list[PoolJob] = []
@@ -544,16 +547,16 @@ class PoolJobManager:
             await self._scheduler.refresh_credits()
 
         for _ in range(max_attempts):
-            profile = await self._acquire_profile(
+            acquired = await self._acquire_profile(
                 job.kind,
                 preferred=job.preferred_profile if not tried else None,
                 exclude=frozenset(tried),
                 required_credits=required_credits,
                 pin_preferred=pinned and bool(job.preferred_profile),
             )
-            if self._is_cancelled(job_id):
-                return
-            if profile is None:
+            if acquired is None:
+                if self._is_cancelled(job_id):
+                    return
                 job.status = "failed"
                 job.error = {
                     "type": "no-healthy-profile",
@@ -566,8 +569,13 @@ class PoolJobManager:
                 self._store.save_job(job)
                 return
 
+            profile, egress = acquired
+            if self._is_cancelled(job_id):
+                self._scheduler.release_lane(profile, egress)
+                return
+
             tried.add(profile)
-            outcome = await self._execute_on_lane(job, profile)
+            outcome = await self._execute_on_lane(job, profile, egress)
             decision = self._scheduler.record_attempt(profile, outcome)
             if outcome.status == "succeeded":
                 job.status = "succeeded"
@@ -607,8 +615,8 @@ class PoolJobManager:
         exclude: frozenset[str],
         required_credits: int | None,
         pin_preferred: bool = False,
-    ) -> str | None:
-        """Pick an idle healthy profile, queueing for as long as every eligible lane is busy."""
+    ) -> tuple[str, str] | None:
+        """Pick and reserve an idle healthy profile + egress slot."""
         while True:
             picked = self._scheduler.pick_profile(
                 kind,
@@ -619,7 +627,8 @@ class PoolJobManager:
                 pin_preferred=pin_preferred,
             )
             if picked is not None:
-                return picked
+                egress = self._scheduler.reserve_lane(picked)
+                return picked, egress
             any_candidate = self._scheduler.pick_profile(
                 kind,
                 preferred=preferred,
@@ -632,43 +641,57 @@ class PoolJobManager:
                 return None
             await asyncio.sleep(_LANE_POLL_S)
 
-    async def _execute_on_lane(self, job: PoolJob, profile: str) -> ExecutionOutcome:
+    async def _execute_on_lane(
+        self,
+        job: PoolJob,
+        profile: str,
+        egress: str,
+    ) -> ExecutionOutcome:
         lock = self._scheduler.lane_lock(profile)
-        async with lock:
-            self._scheduler.mark_busy(profile, True)
-            started_at = utc_now_iso()
-            try:
-                job.status = "running"
-                job.assigned_profile = profile
-                self._store.save_job(job)
-                await self._scheduler.wait_stagger()
-                await self._scheduler.wait_lane_jitter(profile)
+        proxy = self._scheduler.resolve_profile_proxy(profile)
+        try:
+            async with lock:
                 started_at = utc_now_iso()
-                outcome = await self._executor(profile, job.task_type, job.payload)
-            except Exception as exc:  # noqa: BLE001 — capture unexpected lane errors safely
-                log.warning("plus.pool.lane_exception", profile=profile, exc_info=exc)
-                outcome = ExecutionOutcome(
-                    status="failed",
-                    profile=profile,
-                    error_type=type(exc).__name__,
-                    error_detail=str(exc),
-                    charged="no",
-                )
-            finally:
-                self._scheduler.mark_busy(profile, False)
+                try:
+                    job.status = "running"
+                    job.assigned_profile = profile
+                    self._store.save_job(job)
+                    await self._scheduler.wait_stagger()
+                    await self._scheduler.wait_egress_pacing(egress, profile)
+                    await self._scheduler.wait_lane_jitter(profile)
+                    started_at = utc_now_iso()
+                    if self._executor is execute_via_worker:
+                        outcome = await execute_via_worker(
+                            profile, job.task_type, job.payload, proxy=proxy
+                        )
+                    else:
+                        outcome = await self._executor(profile, job.task_type, job.payload)
+                except Exception as exc:  # noqa: BLE001 — capture unexpected lane errors safely
+                    log.warning("plus.pool.lane_exception", profile=profile, exc_info=exc)
+                    outcome = ExecutionOutcome(
+                        status="failed",
+                        profile=profile,
+                        error_type=type(exc).__name__,
+                        error_detail=str(exc),
+                        charged="no",
+                    )
+                finally:
+                    self._scheduler.note_egress_finished(egress, profile)
 
-            attempt = AttemptRecord(
-                profile=profile,
-                status=outcome.status,
-                error_type=outcome.error_type,
-                error_detail=outcome.error_detail,
-                charged=outcome.charged,
-                started_at=started_at,
-                finished_at=utc_now_iso(),
-            )
-            job.attempts.append(attempt.to_dict())
-            self._store.save_job(job)
-            return outcome
+                attempt = AttemptRecord(
+                    profile=profile,
+                    status=outcome.status,
+                    error_type=outcome.error_type,
+                    error_detail=outcome.error_detail,
+                    charged=outcome.charged,
+                    started_at=started_at,
+                    finished_at=utc_now_iso(),
+                )
+                job.attempts.append(attempt.to_dict())
+                self._store.save_job(job)
+                return outcome
+        finally:
+            self._scheduler.release_lane(profile, egress)
 
 
 def _count_statuses(jobs: Sequence[PoolJob]) -> dict[str, int]:

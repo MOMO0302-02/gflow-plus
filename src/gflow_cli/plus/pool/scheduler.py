@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from gflow_cli import profile_store
+from gflow_cli.config import get_settings, validate_browser_proxy_url
 from gflow_cli.errors import (
     AuthExpiredError,
     FlowAccessUnavailableError,
@@ -153,6 +154,11 @@ class AccountPoolScheduler:
 
         self._lane_locks: dict[str, asyncio.Lock] = {}
         self._busy_profiles: set[str] = set()
+        self._egress_active: dict[str, int] = {}
+        self._egress_pacing_locks: dict[str, asyncio.Lock] = {}
+        self._egress_last_submit: dict[str, float] = {}
+        self._egress_last_finish: dict[str, float] = {}
+        self._egress_last_profile: dict[str, str] = {}
         self._used_lanes: set[str] = set()
         self._stagger_lock = asyncio.Lock()
         self._refresh_lock = asyncio.Lock()
@@ -185,6 +191,102 @@ class AccountPoolScheduler:
             self._busy_profiles.add(profile)
         else:
             self._busy_profiles.discard(profile)
+
+    def resolve_profile_proxy(
+        self,
+        profile: str,
+        *,
+        account_state: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Return effective normalized proxy URL for ``profile`` (DB > env map > global)."""
+        st = (
+            account_state
+            if account_state is not None
+            else self._store.get_account_state(profile)
+        )
+        raw_db = st.get("proxy")
+        if isinstance(raw_db, str) and raw_db.strip():
+            return validate_browser_proxy_url(raw_db)
+        env_map = self._settings.parsed_profile_proxies()
+        if profile in env_map:
+            return env_map[profile]
+        return get_settings().browser_proxy
+
+    def egress_group(
+        self,
+        profile: str,
+        *,
+        account_state: dict[str, Any] | None = None,
+    ) -> str:
+        """Canonical egress group key shared by profiles leaving via the same IP/proxy."""
+        return self.resolve_profile_proxy(profile, account_state=account_state) or "direct"
+
+    def is_egress_busy(self, egress_key: str) -> bool:
+        limit = self._settings.max_concurrent_per_egress
+        if limit <= 0:
+            return False
+        return self._egress_active.get(egress_key, 0) >= limit
+
+    def reserve_lane(self, profile: str) -> str:
+        """Synchronously reserve both profile lane and egress slot before yielding control."""
+        egress = self.egress_group(profile)
+        self._busy_profiles.add(profile)
+        self._egress_active[egress] = self._egress_active.get(egress, 0) + 1
+        return egress
+
+    def release_lane(self, profile: str, egress_key: str) -> None:
+        """Release a previously reserved profile lane and egress slot."""
+        self._busy_profiles.discard(profile)
+        cur = self._egress_active.get(egress_key, 0)
+        if cur <= 1:
+            self._egress_active.pop(egress_key, None)
+        else:
+            self._egress_active[egress_key] = cur - 1
+
+    def note_egress_finished(self, egress_key: str, profile: str) -> None:
+        """Record completion timestamp on ``egress_key`` for cross-account spacing."""
+        now = self._clock()
+        self._egress_last_finish[egress_key] = now
+        self._egress_last_profile[egress_key] = profile
+
+    async def wait_egress_pacing(self, egress_key: str, profile: str) -> float:
+        """Enforce minimum spacing on ``egress_key`` to prevent same-IP WAF bursts.
+
+        When switching to a different account on the same egress IP, waits at least
+        ``egress_min_interval_s`` after the previous account's completion; on the same
+        account, ensures consecutive submits are also spaced by ``egress_min_interval_s``.
+        """
+        gap = self._settings.egress_min_interval_s
+        if gap <= 0:
+            return 0.0
+        lock = self._egress_pacing_locks.get(egress_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._egress_pacing_locks[egress_key] = lock
+        async with lock:
+            now = self._clock()
+            last_submit = self._egress_last_submit.get(egress_key, 0.0)
+            last_finish = self._egress_last_finish.get(egress_key, 0.0)
+            last_profile = self._egress_last_profile.get(egress_key)
+            if last_profile is None:
+                egress_st = self._store.get_egress_state(egress_key)
+                stored_ts = egress_st.get("last_used_at")
+                if isinstance(stored_ts, (int, float)) and float(stored_ts) > last_finish:
+                    last_finish = float(stored_ts)
+                stored_prof = egress_st.get("last_profile")
+                if isinstance(stored_prof, str) and stored_prof:
+                    last_profile = stored_prof
+
+            wait_s = 0.0
+            if last_submit > 0:
+                wait_s = max(wait_s, gap - (now - last_submit))
+            if last_finish > 0 and last_profile and last_profile != profile:
+                wait_s = max(wait_s, gap - (now - last_finish))
+            if wait_s > 0:
+                await self._sleep(wait_s)
+            self._egress_last_submit[egress_key] = self._clock()
+            self._egress_last_profile[egress_key] = profile
+            return wait_s
 
     async def wait_stagger(self) -> float:
         """Stagger browser launches across profiles to avoid Windows focus theft."""
@@ -228,12 +330,18 @@ class AccountPoolScheduler:
         """Return cached account health without triggering network or browser calls."""
         now = self._clock()
         states = self._store.list_account_states()
+        egress_states = self._store.list_egress_states()
         out: list[AccountHealth] = []
         for meta in self._eligible_profiles():
             st = states.get(meta.name, {})
             cd_until = st.get("cooldown_until")
             in_cooldown = isinstance(cd_until, (int, float)) and float(cd_until) > now
             disabled = bool(st.get("disabled", 0))
+            proxy = self.resolve_profile_proxy(meta.name, account_state=st)
+            egress = proxy or "direct"
+            eg_st = egress_states.get(egress, {})
+            eg_cd_until = eg_st.get("cooldown_until")
+            eg_in_cooldown = isinstance(eg_cd_until, (int, float)) and float(eg_cd_until) > now
             out.append(
                 AccountHealth(
                     profile=meta.name,
@@ -247,8 +355,20 @@ class AccountPoolScheduler:
                     cooldown_reason=st.get("cooldown_reason"),
                     last_error=st.get("last_error"),
                     last_used_at=st.get("last_used_at"),
-                    healthy=meta.cookies_present and not in_cooldown and not disabled,
+                    healthy=(
+                        meta.cookies_present
+                        and not in_cooldown
+                        and not eg_in_cooldown
+                        and not disabled
+                    ),
                     disabled=disabled,
+                    proxy=proxy,
+                    egress_group=egress,
+                    egress_busy=self.is_egress_busy(egress),
+                    egress_cooldown_until=(
+                        float(eg_cd_until) if isinstance(eg_cd_until, (int, float)) else None
+                    ),
+                    egress_cooldown_reason=eg_st.get("cooldown_reason"),
                 )
             )
         return out
@@ -272,11 +392,15 @@ class AccountPoolScheduler:
         return self.health_report()
 
     async def _refresh_one(self, name: str, *, renew: bool) -> None:
+        proxy = self.resolve_profile_proxy(name)
         async with self.lane_lock(name):
             self.mark_busy(name, True)
             try:
                 await self._browser_pool.evict(name)
-                reply = await self._inspect(name, refresh=renew)
+                if self._inspect is credits_service.inspect_profile:
+                    reply = await self._inspect(name, refresh=renew, proxy=proxy)
+                else:
+                    reply = await self._inspect(name, refresh=renew)
             except SecurityError:
                 raise
             except (ProfileLockedError, NetworkError) as exc:
@@ -330,6 +454,26 @@ class AccountPoolScheduler:
         accounts = self.snapshot_health()
         healthy_accounts = [a for a in accounts if a.healthy]
         known_credits = [a.credits for a in accounts if a.credits is not None]
+        egress_summary: dict[str, dict[str, Any]] = {}
+        egress_profiles: dict[str, list[str]] = {}
+        for acc in accounts:
+            if acc.egress_group not in egress_summary:
+                rem = (
+                    round(acc.egress_cooldown_until - now, 1)
+                    if acc.egress_cooldown_until is not None and acc.egress_cooldown_until > now
+                    else 0.0
+                )
+                prof_list: list[str] = []
+                egress_profiles[acc.egress_group] = prof_list
+                egress_summary[acc.egress_group] = {
+                    "egress_group": acc.egress_group,
+                    "profiles": prof_list,
+                    "active": self._egress_active.get(acc.egress_group, 0),
+                    "busy": acc.egress_busy,
+                    "cooldown_remaining_s": rem,
+                    "cooldown_reason": acc.egress_cooldown_reason if rem > 0 else None,
+                }
+            egress_profiles[acc.egress_group].append(acc.profile)
         return {
             "status": "ok" if healthy_accounts else "degraded",
             "total_profiles": len(accounts),
@@ -339,14 +483,38 @@ class AccountPoolScheduler:
             "recommended_image_profile": self.pick_profile("image"),
             "recommended_video_profile": self.pick_profile("video"),
             "warm_browsers": self._browser_pool.warm_profiles(),
+            "egress_groups": list(egress_summary.values()),
+            "max_concurrent_per_egress": self._settings.max_concurrent_per_egress,
             "profiles": [a.to_dict(now=now) for a in accounts],
         }
 
     def clear_cooldown(self, profile: str | None = None) -> int:
-        """Clear cooldown state for one profile or every stored profile."""
+        """Clear cooldown state for one profile (and its egress group) or every stored profile."""
         if profile is None or profile == "*":
             return self._store.clear_all_cooldowns()
+        egress = self.egress_group(profile)
         self._store.upsert_account_state(profile, clear_cooldown=True, last_error="")
+        self._store.upsert_egress_state(egress, clear_cooldown=True)
+        return 1
+
+    async def set_proxy(self, profile: str, proxy: str) -> str:
+        """Validate and persist a per-profile proxy, evicting any warm browser on the old route."""
+        normalized = validate_browser_proxy_url(proxy)
+        if normalized is None:
+            msg = "proxy must be a non-empty scheme://host:port URL"
+            raise ValueError(msg)
+        self._store.upsert_account_state(profile, proxy=normalized)
+        await self._browser_pool.evict(profile)
+        return normalized
+
+    async def clear_proxy(self, profile: str | None = None) -> int:
+        """Clear per-profile proxy override for one profile or all profiles."""
+        if profile is None or profile == "*":
+            cleared = self._store.clear_all_proxies()
+            await self._browser_pool.close_all()
+            return cleared
+        self._store.upsert_account_state(profile, clear_proxy=True)
+        await self._browser_pool.evict(profile)
         return 1
 
     def set_disabled(self, profile: str, *, disabled: bool) -> None:
@@ -406,10 +574,10 @@ class AccountPoolScheduler:
         allow_busy: bool = False,
         pin_preferred: bool = False,
     ) -> str | None:
-        """Select the best available profile for a job."""
+        """Select the best available profile for a job, respecting per-egress concurrency."""
         candidates = [a for a in self.snapshot_health() if a.healthy and a.profile not in exclude]
         if not allow_busy:
-            candidates = [a for a in candidates if not a.busy]
+            candidates = [a for a in candidates if not a.busy and not a.egress_busy]
         if not candidates:
             return None
 
@@ -424,24 +592,33 @@ class AccountPoolScheduler:
                 return None
             candidates.sort(
                 key=lambda a: (
-                    1 if a.busy else 0,
+                    1 if (a.busy or a.egress_busy) else 0,
                     -(a.credits if a.credits is not None else -1),
                     a.last_used_at or 0.0,
                 )
             )
             return candidates[0].profile
 
-        candidates.sort(key=lambda a: (1 if a.busy else 0, a.last_used_at or 0.0))
+        candidates.sort(
+            key=lambda a: (1 if (a.busy or a.egress_busy) else 0, a.last_used_at or 0.0)
+        )
         return candidates[0].profile
 
     def record_attempt(self, profile: str, outcome: ExecutionOutcome) -> FailoverDecision:
-        """Update account cooldown/LRU state after one attempt and return failover decision."""
+        """Update account and egress cooldown/LRU state after one attempt."""
         now = self._clock()
+        egress = self.egress_group(profile)
         if outcome.status == "succeeded":
             self._store.upsert_account_state(
                 profile,
                 last_used_at=now,
                 last_error="",
+                clear_cooldown=True,
+            )
+            self._store.upsert_egress_state(
+                egress,
+                last_used_at=now,
+                last_profile=profile,
                 clear_cooldown=True,
             )
             return FailoverDecision(retry_other_profile=False, cooldown_s=0.0, cooldown_reason=None)
@@ -456,9 +633,23 @@ class AccountPoolScheduler:
             last_error=outcome.error_detail or outcome.error_type or outcome.status,
             last_used_at=now,
         )
+        if (
+            decision.cooldown_reason == "waf_unusual_activity"
+            and self._settings.egress_waf_cooldown_s > 0
+        ):
+            self._store.upsert_egress_state(
+                egress,
+                cooldown_until=now + self._settings.egress_waf_cooldown_s,
+                cooldown_reason="egress_waf_unusual_activity",
+                last_used_at=now,
+                last_profile=profile,
+            )
+        else:
+            self._store.upsert_egress_state(egress, last_used_at=now, last_profile=profile)
         log.info(
             "plus.pool.attempt_failed",
             profile=profile,
+            egress_group=egress,
             error_type=outcome.error_type,
             charged=outcome.charged,
             retry_other=decision.retry_other_profile,

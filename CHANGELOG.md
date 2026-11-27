@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### gflow-plus
+
+- **Per-profile residential proxy binding (`set_proxy` / `clear_proxy` / `GFLOW_PLUS_PROFILE_PROXIES`)**: bind independent `http://`, `https://`, or `socks5://` proxies per account at runtime (persisted in `plus_state.db`, zero restart) or via env var; automatically evicts warm browsers on route change, routes credit reads/renewals through the bound proxy, and prevents `DirectHttpTransport` from bypassing per-profile proxies via direct host HTTP.
+- **Egress-group concurrency isolation, pacing & WAF shielding**: profiles sharing an egress IP/proxy are automatically serialized (`GFLOW_PLUS_MAX_CONCURRENT_PER_EGRESS=1`), spaced across account switches (`GFLOW_PLUS_EGRESS_MIN_INTERVAL_S=15`), and protected by egress-scoped WAF cooldown (`GFLOW_PLUS_EGRESS_WAF_COOLDOWN_S=180`) while independent proxy groups run in full parallel (supporting mixed topologies such as 3 accounts across 2 residential IPs).
+- **Pre-submit parameter & media path validation**: reject misspelled batch item keys with close-match suggestions, missing/empty local image files, `end_image` without `start_image`, mismatched `reference_entities`/`reference_entity_names`, and empty batches upfront with structured 400 errors before launching Chrome or spending WAF budget.
+
 ## [1.2.1] - 2026-11-26
 
 ### Fixed

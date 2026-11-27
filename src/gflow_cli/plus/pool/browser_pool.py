@@ -72,6 +72,7 @@ class _WarmSlot:
     headless: bool
     transport: str | None
     last_used_at: float
+    proxy: str | None = None
     reap_task: asyncio.Task[None] | None = None
     in_use: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -160,6 +161,7 @@ class WarmBrowserPool:
         ttl: float,
     ) -> _WarmSlot:
         stale: _WarmSlot | None = None
+        effective_proxy = getattr(settings, "browser_proxy", None) if settings is not None else None
         async with self._guard:
             existing = self._slots.get(profile)
             if existing is not None:
@@ -168,6 +170,7 @@ class WarmBrowserPool:
                 matches = (
                     existing.headless == headless
                     and existing.transport == transport
+                    and existing.proxy == effective_proxy
                     and not expired
                     and _client_is_alive(existing.client)
                 )
@@ -198,6 +201,7 @@ class WarmBrowserPool:
             headless=headless,
             transport=transport,
             last_used_at=self._clock(),
+            proxy=effective_proxy,
             in_use=True,
         )
         async with self._guard:

@@ -47,7 +47,16 @@ CREATE TABLE IF NOT EXISTS plus_account_state (
     cooldown_reason TEXT,
     last_error TEXT,
     last_used_at REAL,
-    disabled INTEGER NOT NULL DEFAULT 0
+    disabled INTEGER NOT NULL DEFAULT 0,
+    proxy TEXT
+);
+
+CREATE TABLE IF NOT EXISTS plus_egress_state (
+    egress_key TEXT PRIMARY KEY,
+    cooldown_until REAL,
+    cooldown_reason TEXT,
+    last_used_at REAL,
+    last_profile TEXT
 );
 """
 
@@ -94,6 +103,8 @@ class PlusStateStore:
                 con.execute(
                     "ALTER TABLE plus_account_state ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"
                 )
+            if "proxy" not in acc_cols:
+                con.execute("ALTER TABLE plus_account_state ADD COLUMN proxy TEXT")
 
     @property
     def db_path(self) -> Path:
@@ -128,17 +139,20 @@ class PlusStateStore:
         last_used_at: float | None = None,
         clear_cooldown: bool = False,
         disabled: bool | None = None,
+        proxy: str | None = None,
+        clear_proxy: bool = False,
     ) -> None:
         # One statement, so an update never reads a row another process is about to change:
-        # a field left as None keeps the stored value; clear_cooldown nulls both cooldown fields.
+        # a field left as None keeps the stored value; clear_cooldown/clear_proxy null their fields.
         disabled_val = None if disabled is None else (1 if disabled else 0)
+        proxy_val = None if clear_proxy else proxy
         with self._connect() as con:
             con.execute(
                 """
                 INSERT INTO plus_account_state (
                     profile, credits, credits_checked_at, cooldown_until,
-                    cooldown_reason, last_error, last_used_at, disabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))
+                    cooldown_reason, last_error, last_used_at, disabled, proxy
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?)
                 ON CONFLICT(profile) DO UPDATE SET
                     credits = COALESCE(excluded.credits, credits),
                     credits_checked_at = COALESCE(excluded.credits_checked_at, credits_checked_at),
@@ -148,7 +162,9 @@ class PlusStateStore:
                         ELSE COALESCE(excluded.cooldown_reason, cooldown_reason) END,
                     last_error = COALESCE(excluded.last_error, last_error),
                     last_used_at = COALESCE(excluded.last_used_at, last_used_at),
-                    disabled = COALESCE(?, disabled)
+                    disabled = COALESCE(?, disabled),
+                    proxy = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.proxy, proxy) END
                 """,
                 (
                     profile,
@@ -159,20 +175,83 @@ class PlusStateStore:
                     last_error,
                     last_used_at,
                     disabled_val,
+                    proxy_val,
                     clear_cooldown,
                     clear_cooldown,
                     disabled_val,
+                    clear_proxy,
                 ),
             )
 
     def clear_all_cooldowns(self) -> int:
-        """Clear cooldowns across every stored profile in one SQL statement."""
+        """Clear cooldowns across every stored profile and egress group."""
         with self._connect() as con:
             cur = con.execute(
                 "UPDATE plus_account_state SET cooldown_until = NULL, cooldown_reason = NULL "
                 "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
             )
+            con.execute(
+                "UPDATE plus_egress_state SET cooldown_until = NULL, cooldown_reason = NULL "
+                "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
+            )
             return cur.rowcount
+
+    def clear_all_proxies(self) -> int:
+        """Clear persisted per-profile proxy overrides across every stored profile."""
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE plus_account_state SET proxy = NULL WHERE proxy IS NOT NULL"
+            )
+            return cur.rowcount
+
+    # --- Egress state -------------------------------------------------------
+
+    def get_egress_state(self, egress_key: str) -> dict[str, Any]:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT * FROM plus_egress_state WHERE egress_key = ?", (egress_key,)
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def list_egress_states(self) -> dict[str, dict[str, Any]]:
+        with self._connect() as con:
+            rows = con.execute("SELECT * FROM plus_egress_state").fetchall()
+        return {str(r["egress_key"]): dict(r) for r in rows}
+
+    def upsert_egress_state(
+        self,
+        egress_key: str,
+        *,
+        cooldown_until: float | None = None,
+        cooldown_reason: str | None = None,
+        last_used_at: float | None = None,
+        last_profile: str | None = None,
+        clear_cooldown: bool = False,
+    ) -> None:
+        with self._connect() as con:
+            con.execute(
+                """
+                INSERT INTO plus_egress_state (
+                    egress_key, cooldown_until, cooldown_reason, last_used_at, last_profile
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(egress_key) DO UPDATE SET
+                    cooldown_until = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.cooldown_until, cooldown_until) END,
+                    cooldown_reason = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.cooldown_reason, cooldown_reason) END,
+                    last_used_at = COALESCE(excluded.last_used_at, last_used_at),
+                    last_profile = COALESCE(excluded.last_profile, last_profile)
+                """,
+                (
+                    egress_key,
+                    None if clear_cooldown else cooldown_until,
+                    None if clear_cooldown else cooldown_reason,
+                    last_used_at,
+                    last_profile,
+                    clear_cooldown,
+                    clear_cooldown,
+                ),
+            )
 
     def prune_account_states(self, valid_profiles: Collection[str]) -> list[str]:
         """Delete state rows whose profile no longer exists on disk and return their names."""

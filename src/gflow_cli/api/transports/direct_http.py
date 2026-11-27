@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.base import TransportSetup
 
 log = structlog.get_logger(__name__)
 
@@ -420,10 +421,15 @@ class DirectHttpTransport(UiAutomationTransport):
 
     name = "direct_http"
     _profile_dir: Path | None = None
+    _browser_proxy: str | None = None
 
     def __init__(self, *, http_transport: httpx.AsyncBaseTransport | None = None) -> None:
         super().__init__()
         self._http_transport = http_transport
+
+    def apply_setup(self, config: TransportSetup) -> None:
+        self._browser_proxy = config.browser_proxy
+        super().apply_setup(config)
 
     async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         self._profile_dir = profile_dir
@@ -499,7 +505,7 @@ class DirectHttpTransport(UiAutomationTransport):
             return "no_profile_dir"
         if get_settings().flow_host == "labs.google":
             return "flow_host_labs"
-        if _proxy_configured():
+        if self._browser_proxy or _proxy_configured():
             return "proxy_configured"
         return None
 
@@ -512,6 +518,6 @@ class DirectHttpTransport(UiAutomationTransport):
             return "no_profile_dir"
         if get_settings().flow_host == "labs.google":
             return "flow_host_labs"
-        if _proxy_configured():
+        if self._browser_proxy or _proxy_configured():
             return "proxy_configured"
         return None

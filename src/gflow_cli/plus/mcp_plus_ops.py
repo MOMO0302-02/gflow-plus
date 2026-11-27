@@ -33,13 +33,24 @@ _UpscaleScale = Annotated[
     ),
 ]
 _ControlAction = Annotated[
-    Literal["clear_cooldown", "renew", "exclude", "include", "close_browser"],
+    Literal[
+        "clear_cooldown",
+        "renew",
+        "exclude",
+        "include",
+        "close_browser",
+        "set_proxy",
+        "clear_proxy",
+    ],
     Field(
         description=(
             "clear_cooldown: clear cooldown on one or all profiles; "
             "renew: headlessly renew a profile's Flow session and refresh credits; "
             "exclude/include: disable or re-enable a profile in automatic scheduling; "
-            "close_browser: close idle warm Chrome window(s) immediately."
+            "close_browser: close idle warm Chrome window(s) immediately; "
+            "set_proxy: bind a per-profile proxy URL (scheme://host:port, no credentials) "
+            "and evict its warm browser so the new egress IP takes effect immediately; "
+            "clear_proxy: remove persisted per-profile proxy binding for one or all profiles."
         )
     ),
 ]
@@ -309,7 +320,8 @@ async def gflow_plus_retry_job(
     description=(
         "Manage multi-account pool lanes without restarting MCP (zero credits): clear "
         "cooldowns, headlessly renew a profile's Flow session, temporarily exclude/include "
-        "an account from scheduling, or close idle warm Chrome windows."
+        "an account from scheduling, bind/clear per-profile residential proxies "
+        "(set_proxy/clear_proxy), or close idle warm Chrome windows."
     ),
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]
@@ -320,7 +332,17 @@ async def gflow_plus_profile_control(
         str | None,
         Field(
             description=(
-                "Target profile name; omit or pass '*' for clear_cooldown/close_browser on all."
+                "Target profile name; omit or pass '*' for clear_cooldown/close_browser/"
+                "clear_proxy on all."
+            )
+        ),
+    ] = None,
+    proxy: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Proxy URL for action='set_proxy': 'http://host:port', 'https://host:port' "
+                "or 'socks5://host:port' (without credentials)."
             )
         ),
     ] = None,
@@ -333,11 +355,31 @@ async def gflow_plus_profile_control(
     if action == "close_browser":
         closed = await scheduler.close_warm_browsers(profile)
         return {"status": "ok", "action": action, "profile": profile or "*", "closed": closed}
+    if action == "clear_proxy":
+        cleared = await scheduler.clear_proxy(profile)
+        return {"status": "ok", "action": action, "profile": profile or "*", "cleared": cleared}
     if not profile or profile == "*":
         return common._bad_param(  # pyright: ignore[reportPrivateUsage]
             "Profile Required",
             f"action={action!r} requires a specific profile name.",
         )
+    if action == "set_proxy":
+        if not proxy or not proxy.strip():
+            return common._bad_param(  # pyright: ignore[reportPrivateUsage]
+                "Proxy Required",
+                "action='set_proxy' requires a proxy URL (scheme://host:port).",
+            )
+        try:
+            normalized = await scheduler.set_proxy(profile, proxy)
+        except ValueError as exc:
+            return common._bad_param("Invalid Proxy", str(exc))  # pyright: ignore[reportPrivateUsage]
+        return {
+            "status": "ok",
+            "action": action,
+            "profile": profile,
+            "proxy": normalized,
+            "egress_group": normalized,
+        }
     if action == "exclude":
         scheduler.set_disabled(profile, disabled=True)
         await scheduler.close_warm_browsers(profile)

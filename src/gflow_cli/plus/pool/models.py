@@ -27,16 +27,28 @@ class AccountHealth:
     last_used_at: float | None
     healthy: bool
     disabled: bool = False
+    proxy: str | None = None
+    egress_group: str = "direct"
+    egress_busy: bool = False
+    egress_cooldown_until: float | None = None
+    egress_cooldown_reason: str | None = None
 
     def to_dict(self, *, now: float) -> dict[str, Any]:
         remaining = 0.0
         if self.cooldown_until is not None and self.cooldown_until > now:
             remaining = round(self.cooldown_until - now, 1)
-        reason = (
-            "manually_disabled"
-            if self.disabled
-            else (self.cooldown_reason if remaining > 0 else None)
-        )
+        egress_remaining = 0.0
+        if self.egress_cooldown_until is not None and self.egress_cooldown_until > now:
+            egress_remaining = round(self.egress_cooldown_until - now, 1)
+        effective_remaining = max(remaining, egress_remaining)
+        if self.disabled:
+            reason: str | None = "manually_disabled"
+        elif remaining > 0:
+            reason = self.cooldown_reason
+        elif egress_remaining > 0:
+            reason = self.egress_cooldown_reason or "egress_waf_cooldown"
+        else:
+            reason = None
         return {
             "profile": self.profile,
             "email": self.email,
@@ -45,7 +57,11 @@ class AccountHealth:
             "credits": self.credits,
             "busy": self.busy,
             "disabled": self.disabled,
-            "cooldown_remaining_s": remaining,
+            "proxy": self.proxy,
+            "egress_group": self.egress_group,
+            "egress_busy": self.egress_busy,
+            "egress_cooldown_remaining_s": egress_remaining,
+            "cooldown_remaining_s": effective_remaining,
             "cooldown_reason": reason,
             "last_error": self.last_error,
             "healthy": self.healthy,

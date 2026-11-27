@@ -37,7 +37,7 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | `gflow_plus_job_status` | 单个任务、整批或最近任务的交付记录（批量/列表默认精简回包，`verbose=true` 返回完整尝试日志） | 否 |
 | `gflow_plus_cancel_job` | 取消还在排队的任务；已经在跑的停不下来 | 否 |
 | `gflow_plus_retry_job` | 重跑单个失败/已取消任务或整批失败项（`may_have_spent=true` 或 `indeterminate` 默认拒跑，需显式 `force_spent=true`） | 是 |
-| `gflow_plus_profile_control` | 清除冷却、无头续期登录态、临时禁用/恢复账号、关闭空闲热浏览器 | 否 |
+| `gflow_plus_profile_control` | 清除冷却、无头续期登录态、临时禁用/恢复账号、运行时绑定/解绑单账号代理（`set_proxy`/`clear_proxy`）、关闭空闲热浏览器 | 否 |
 | `gflow_plus_sync_accounts` | 升级或切换 `GFLOW_CLI_HOME` 后同步已登录账号：自动探测系统默认目录或指定备份目录导入缺失账号、延续默认账号、清理 `plus_state.db` 孤儿记录并刷新余额 | 否 |
 | `gflow_plus_list_media` | 跨所有账号检索本地 `gflow.db` 里的图片和视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 立即隐藏一次任务栏里的 gflow Chrome | 否 |
@@ -58,7 +58,7 @@ gflow plus pool status [--json]
 gflow plus pool pick --kind video|image [--json]
 gflow plus pool jobs [--batch-id ID] [--status STATUS] [--limit N] [--json]
 gflow plus pool retry [--job-id ID] [--batch-id ID] [--force-spent] [--profile NAME] [--json]  # 会花积分
-gflow plus pool profile-control clear_cooldown|renew|exclude|include|close_browser [--profile NAME] [--json]
+gflow plus pool profile-control clear_cooldown|renew|exclude|include|close_browser|set_proxy|clear_proxy [--profile NAME] [--proxy URL] [--json]
 gflow plus media [--kind all|image|video] [--profile NAME] [--query TEXT] [--limit N] [--json]
 gflow plus upscale MEDIA_ID [--media-kind image|video] [--scale SCALE] [--json]  # 视频 4k 会花积分
 gflow plus extend MEDIA_ID PROMPT [--aspect 9:16|16:9] [--max-credits N] [--json]  # 会花积分
@@ -81,7 +81,11 @@ gflow plus hide-taskbar [--json]
 | `GFLOW_PLUS_RATE_LIMIT_COOLDOWN_S` | `180` | 限流 / 余额不足后的冷却 |
 | `GFLOW_PLUS_AUTH_ERROR_COOLDOWN_S` | `1800` | 登录失效后的冷却 |
 | `GFLOW_PLUS_TRANSIENT_COOLDOWN_S` | `30` | 提交前界面 / 网络问题后的冷却 |
-| `GFLOW_PLUS_WAF_COOLDOWN_S` | `600` | "检测到异常活动"后的冷却 |
+| `GFLOW_PLUS_WAF_COOLDOWN_S` | `600` | "检测到异常活动"后的单账号冷却 |
+| `GFLOW_PLUS_PROFILE_PROXIES` | 空 | 按账号绑定独立代理（逗号分隔 `profile=scheme://host:port`，不含密码）；也可用 `profile-control set_proxy` 运行时持久化绑定 |
+| `GFLOW_PLUS_MAX_CONCURRENT_PER_EGRESS` | `1` | 同一出口 IP/代理组的最大并发数（默认 `1` 防同 IP 连坐 WAF；不同代理组完全并发；`0` 不限） |
+| `GFLOW_PLUS_EGRESS_MIN_INTERVAL_S` | `15` | 同一出口组连续提交或跨账号切换的最小间隔秒数 |
+| `GFLOW_PLUS_EGRESS_WAF_COOLDOWN_S` | `180` | 某账号触发 WAF 后对其所属出口组施加的软冷却秒数（保护同 IP 其他号不顶上送死，不影响其他独立代理组） |
 | `GFLOW_PLUS_MAX_FAILOVER_ATTEMPTS` | `3` | 一个任务最多换几个账号 |
 | `GFLOW_PLUS_DEFAULT_WAIT_TIMEOUT_S` | `25` | `wait_jobs` 默认等待秒数（上限 35） |
 | `GFLOW_PLUS_WARM_BROWSER_TTL_S` | `120` | 单账号空闲热浏览器保活秒数（`0` 关闭复用） |

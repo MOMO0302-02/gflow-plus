@@ -67,6 +67,8 @@ class TransportSetup:
     body, so the transport — which already summarises it for the #170 submit
     backstop — hands the counts back through this callback. ``None`` (the
     default, and whenever incident capture is off) makes the call a no-op."""
+    browser_proxy: str | None = None
+    """Effective browser proxy for this client's profile, when set (global or per-profile)."""
 
 
 @runtime_checkable

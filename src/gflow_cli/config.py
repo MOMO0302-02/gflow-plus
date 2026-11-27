@@ -310,6 +310,49 @@ class BrowserEngine(StrEnum):
     PATCHRIGHT = "patchright"
 
 
+def validate_browser_proxy_url(value: object) -> str | None:
+    """Validate and normalize a browser proxy URL (no credentials, scheme://host:port).
+
+    Shared by global ``GFLOW_CLI_BROWSER_PROXY`` (#1036) and per-profile proxies
+    in ``gflow_cli.plus``. Never echoes the rejected value in error messages.
+    """
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        msg = "invalid proxy: not a string"
+        raise ValueError(msg)
+    raw = value.strip()
+    if not raw:
+        return None
+    url = urlsplit(raw)
+    try:
+        port = url.port
+    except ValueError:
+        port = -1
+    problem = None
+    if url.scheme.lower() not in ("http", "https", "socks5"):
+        problem = "scheme must be http://, https:// or socks5://"
+    elif "@" in url.netloc:
+        # Measured 2026-10-22: with Playwright's proxy credentials the Flow page
+        # never loads (45 s timeout, both engines) while the same proxy without
+        # them loads it in ~1 s — tests/e2e/test_browser_proxy_e2e.py.
+        problem = (
+            "proxy credentials (user:pass@) are not supported: Flow does not load "
+            "through them. Use a proxy without credentials, such as a local client "
+            "(Clash: http://127.0.0.1:7897) that holds them for you"
+        )
+    elif not url.hostname or port in (None, -1) or url.path not in ("", "/") or url.query:
+        problem = "expected scheme://host:port with nothing after the port"
+    if problem or not url.hostname:
+        # A rejected value may hold a password, so the message never repeats it.
+        msg = f"invalid proxy: {problem or 'missing hostname'}"
+        raise ValueError(msg)
+    host = url.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{url.scheme.lower()}://{host}:{port}"
+
+
 class Settings(BaseSettings):
     """All gflow-cli configuration. Build via `Settings()` (or `get_settings()`)."""
 
@@ -610,35 +653,7 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_browser_proxy(cls, v: object) -> object:
         """Refuse a value the browser cannot use, at load (exit 11), never echoing it."""
-        if v is None or v == "":
-            return None
-        if not isinstance(v, str):
-            msg = "invalid proxy: not a string"
-            raise ValueError(msg)  # noqa: TRY004 — pydantic wants ValueError
-        url = urlsplit(v.strip())
-        try:
-            port = url.port
-        except ValueError:
-            port = -1
-        problem = None
-        if url.scheme not in ("http", "https", "socks5"):
-            problem = "scheme must be http://, https:// or socks5://"
-        elif "@" in url.netloc:
-            # Measured 2026-10-22: with Playwright's proxy credentials the Flow page
-            # never loads (45 s timeout, both engines) while the same proxy without
-            # them loads it in ~1 s — tests/e2e/test_browser_proxy_e2e.py.
-            problem = (
-                "proxy credentials (user:pass@) are not supported: Flow does not load "
-                "through them. Use a proxy without credentials, such as a local client "
-                "(Clash: http://127.0.0.1:7897) that holds them for you"
-            )
-        elif not url.hostname or port in (None, -1) or url.path not in ("", "/") or url.query:
-            problem = "expected scheme://host:port with nothing after the port"
-        if problem:
-            # A rejected value may hold a password, so the message never repeats it.
-            msg = f"invalid proxy: {problem}"
-            raise ValueError(msg)
-        return v.strip()
+        return validate_browser_proxy_url(v)
 
     browser_engine: BrowserEngine = Field(
         default=BrowserEngine.PLAYWRIGHT,
