@@ -80,12 +80,14 @@ class FlowWorker:
         db_path: str,
         *,
         client_opener: Callable[..., AbstractAsyncContextManager[FlowApiClient]] | None = None,
+        on_submit_done: Callable[[], None] | None = None,
     ):
         self.profile_name = profile_name
         self.db_path = Path(db_path)
         self.db = DataStore.open(self.db_path)
         self.repo = QueueRepository(self.db)
         self._client_opener = client_opener
+        self._on_submit_done = on_submit_done
         self._stop = False
 
     def _open_client(self, **kwargs: Any) -> AbstractAsyncContextManager[FlowApiClient]:
@@ -442,6 +444,11 @@ class FlowWorker:
                             except Exception as exc:
                                 logger.warning("Failed to record started video", exc_info=exc)
 
+                        submit_kw: dict[str, Any] = (
+                            {"on_submit_done": self._on_submit_done}
+                            if self._on_submit_done is not None
+                            else {}
+                        )
                         result = await client.generate_video(
                             req=req,
                             project_id=project_id,
@@ -449,6 +456,7 @@ class FlowWorker:
                             download=True,
                             on_started=on_started,
                             on_checkpoint=observe_checkpoint,
+                            **submit_kw,
                         )
                         flow_media_id = result.status.media_id
 

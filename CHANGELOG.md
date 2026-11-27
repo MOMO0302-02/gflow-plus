@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### gflow-plus
+
+- **Sticky primary profile per egress (`GFLOW_PLUS_STICKY_PROFILE_PER_EGRESS=1`)**: keeps work on one healthy primary account per egress IP instead of round-robin switching across accounts on the same IP, cutting multi-account farm signals while failing over cleanly when the primary cools down or runs low on credits.
+- **Automatic sticky Flow project (`GFLOW_PLUS_STICKY_PROJECT=1`) & `clear_sticky_project`**: reuses one Flow project per batch/profile when no explicit `project_id`/`project_name` is passed, eliminating redundant `create_project` calls and automatically unlocking in-project reference image deduplication.
+- **Zero-reupload in-project `job:<label>` chaining (`i2v` & `i2i`)**: downstream `i2v` and `i2i` jobs automatically bind upstream assets already in the same Flow project by catalog `media_id` + `display_name` (with automatic local upload fallback on picker miss or cross-account failover).
+- **Kind-aware adaptive egress pacing, jitter, breathers & AIMD backoff**: differentiates image spacing (`4s`) from video spacing (`15s`), adds human-like random jitter (`0.4`), inserts periodic breathers every 7 videos (`35s`), raises egress backoff multiplier (`×1.8`, cap `4.0`) on WAF/429 and decays gradually after 5 consecutive successes.
+- **Extended warm browser reuse & local credit deduction**: raises default `warm_browser_ttl_s` and `credit_cache_ttl_s` to `600s`, adds ref-counted warm client sharing across tabs, and locally deducts estimated/quoted video credits on completion.
+- **Single-profile video submit-gate / render-wait pipelining (`GFLOW_PLUS_MAX_INFLIGHT_VIDEOS_PER_PROFILE=2`)**: on `flow.google.com`, runs pipelined videos in dedicated sibling tabs of the same Chrome context and releases the submit gate as soon as Flow confirms `VideoStarted`, allowing 2 concurrent in-flight renders on one primary account without cross-account same-IP concurrency.
+
 ## [1.3.0] - 2026-11-27
 
 ### gflow-plus

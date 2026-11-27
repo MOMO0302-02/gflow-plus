@@ -226,6 +226,7 @@ class VideoGenerationMixin(FrameAttachMixin):
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
         name_resolver: Callable[[str], str | None] | None = None,
+        on_submit_done: Callable[[], None] | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
 
@@ -243,6 +244,12 @@ class VideoGenerationMixin(FrameAttachMixin):
         ``on_started`` is called with a :class:`VideoStarted` as soon as the
         media_id is known (before polling completes) so the recorder can insert
         a STARTED row even if the long poll later fails.
+
+        When ``on_submit_done`` is provided on the migrated ``flow.google.com``
+        host, the generation runs in a dedicated sibling tab of the same
+        BrowserContext and releases ``self._generate_lock`` (and calls
+        ``on_submit_done``) as soon as Flow confirms the submit, allowing
+        concurrent in-flight renders on one profile without DOM contention.
         """
         if not self._setup_done or self._page is None:
             msg = "UiAutomationTransport.setup() must be called before generate_video()"
@@ -257,6 +264,17 @@ class VideoGenerationMixin(FrameAttachMixin):
             raise ValueError(
                 msg,
             )
+        if on_submit_done is not None:
+            return await self._generate_video_pipelined(
+                request,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+                name_resolver=name_resolver,
+                on_submit_done=on_submit_done,
+            )
         async with self._generate_lock:
             return await self._generate_video_locked(
                 request,
@@ -267,6 +285,91 @@ class VideoGenerationMixin(FrameAttachMixin):
                 on_started=on_started,
                 name_resolver=name_resolver,
             )
+
+    async def _generate_video_pipelined(
+        self,
+        request: GenerateVideoRequest,
+        *,
+        project_id: str | None = None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+        name_resolver: Callable[[str], str | None] | None,
+        on_submit_done: Callable[[], None],
+    ) -> VideoResult:
+        """Run one migrated video in a dedicated tab, releasing the submit lock
+        immediately after Flow accepts the submit so another clip can submit
+        while this tab waits for rendering and downloads the MP4."""
+        is_i2v_with_frames = request.mode is Mode.I2V and any(
+            (
+                request.start_image,
+                request.start_image_ref_name,
+                request.start_image_ref_id,
+                request.end_image,
+                request.end_image_ref_name,
+                request.end_image_ref_id,
+            )
+        )
+        VideoGenerationMixin._resolve_i2v_model(request, is_i2v_with_frames)
+
+        from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+            migrated_can_serve,
+            run_video,
+        )
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        await self._generate_lock.acquire()
+        lock_held = True
+        notified = False
+        tab: Page | None = None
+
+        def _release_submit() -> None:
+            nonlocal lock_held, notified
+            if lock_held:
+                lock_held = False
+                self._generate_lock.release()
+            if not notified:
+                notified = True
+                on_submit_done()
+
+        try:
+            page: Page = self._page  # type: ignore[assignment]
+            await self.park_deferred_page()
+            flow_host = get_settings().flow_host
+            prefer = migrated_can_serve(request, project_id)
+            route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+            ctx = getattr(page, "context", None)
+            new_page_fn = getattr(ctx, "new_page", None) if ctx is not None else None
+            if route == "migrated" and callable(new_page_fn):
+                new_tab: Page = await ctx.new_page()  # type: ignore[union-attr]
+                tab = new_tab
+                return await run_video(
+                    new_tab,
+                    request,
+                    project_id=project_id,
+                    save=partial(self._save_clip, out_dir=out_dir),
+                    poll_timeout_s=poll_timeout_s,
+                    download=download,
+                    on_started=on_started,
+                    on_submit_done=_release_submit,
+                )
+            return await self._generate_video_locked(
+                request,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+                name_resolver=name_resolver,
+            )
+        finally:
+            _release_submit()
+            if tab is not None:
+                try:
+                    await tab.close()
+                except Exception as exc:  # noqa: BLE001 - best-effort tab cleanup
+                    log.debug("migrated.pipeline_tab_close_failed", error=type(exc).__name__)
 
     @staticmethod
     def _parse_generate_response(

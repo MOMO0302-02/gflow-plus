@@ -74,8 +74,13 @@ class _WarmSlot:
     last_used_at: float
     proxy: str | None = None
     reap_task: asyncio.Task[None] | None = None
-    in_use: bool = False
+    active_leases: int = 0
+    pending_evict: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    @property
+    def in_use(self) -> bool:
+        return self.active_leases > 0
 
 
 class WarmBrowserPool:
@@ -142,12 +147,19 @@ class WarmBrowserPool:
             evict_after = _should_evict_on_error(exc) or not _client_is_alive(slot.client)
             raise
         finally:
-            if evict_after or not _client_is_alive(slot.client):
+            should_drop = False
+            async with self._guard:
+                slot.active_leases = max(0, slot.active_leases - 1)
+                if evict_after or not _client_is_alive(slot.client):
+                    slot.pending_evict = True
+                if slot.active_leases == 0:
+                    if slot.pending_evict:
+                        should_drop = True
+                    else:
+                        slot.last_used_at = self._clock()
+                        self._schedule_reap(profile, slot, ttl)
+            if should_drop:
                 await self._drop_slot(profile, slot)
-            else:
-                slot.in_use = False
-                slot.last_used_at = self._clock()
-                self._schedule_reap(profile, slot, ttl)
 
     async def _acquire_slot(
         self,
@@ -166,25 +178,33 @@ class WarmBrowserPool:
             existing = self._slots.get(profile)
             if existing is not None:
                 self._cancel_reap(existing)
-                expired = (self._clock() - existing.last_used_at) > ttl
+                expired = (
+                    existing.active_leases == 0
+                    and (self._clock() - existing.last_used_at) > ttl
+                )
                 matches = (
                     existing.headless == headless
                     and existing.transport == transport
                     and existing.proxy == effective_proxy
+                    and not existing.pending_evict
                     and not expired
                     and _client_is_alive(existing.client)
                 )
                 if matches:
-                    existing.in_use = True
+                    existing.active_leases += 1
                     existing.client.out_dir = out_dir
                     if settings is not None:
                         existing.client.settings = settings
-                    log.debug("plus.browser_pool.reuse", profile=profile)
+                    log.debug(
+                        "plus.browser_pool.reuse",
+                        profile=profile,
+                        active_leases=existing.active_leases,
+                    )
                     return existing
                 self._slots.pop(profile, None)
                 stale = existing
 
-        if stale is not None:
+        if stale is not None and stale.active_leases == 0:
             await self._close_client(profile, stale.client)
 
         client = self._client_factory(
@@ -202,7 +222,7 @@ class WarmBrowserPool:
             transport=transport,
             last_used_at=self._clock(),
             proxy=effective_proxy,
-            in_use=True,
+            active_leases=1,
         )
         async with self._guard:
             self._slots[profile] = slot

@@ -41,16 +41,19 @@ _ControlAction = Annotated[
         "close_browser",
         "set_proxy",
         "clear_proxy",
+        "clear_sticky_project",
     ],
     Field(
         description=(
-            "clear_cooldown: clear cooldown on one or all profiles; "
+            "clear_cooldown: clear cooldown and AIMD backoff on one or all profiles; "
             "renew: headlessly renew a profile's Flow session and refresh credits; "
             "exclude/include: disable or re-enable a profile in automatic scheduling; "
             "close_browser: close idle warm Chrome window(s) immediately; "
             "set_proxy: bind a per-profile proxy URL (scheme://host:port, no credentials) "
             "and evict its warm browser so the new egress IP takes effect immediately; "
-            "clear_proxy: remove persisted per-profile proxy binding for one or all profiles."
+            "clear_proxy: remove persisted per-profile proxy binding for one or all profiles; "
+            "clear_sticky_project: clear cached sticky Flow project for one or all profiles "
+            "so the next submit starts a fresh project."
         )
     ),
 ]
@@ -357,6 +360,9 @@ async def gflow_plus_profile_control(
         return {"status": "ok", "action": action, "profile": profile or "*", "closed": closed}
     if action == "clear_proxy":
         cleared = await scheduler.clear_proxy(profile)
+        return {"status": "ok", "action": action, "profile": profile or "*", "cleared": cleared}
+    if action == "clear_sticky_project":
+        cleared = scheduler.clear_sticky_project(profile)
         return {"status": "ok", "action": action, "profile": profile or "*", "cleared": cleared}
     if not profile or profile == "*":
         return common._bad_param(  # pyright: ignore[reportPrivateUsage]

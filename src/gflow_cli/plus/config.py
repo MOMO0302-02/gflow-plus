@@ -37,9 +37,12 @@ class PlusSettings(BaseSettings):
         description="Minimum Veo credits required before routing a video job to an account.",
     )
     credit_cache_ttl_s: float = Field(
-        default=300.0,
+        default=600.0,
         ge=0.0,
-        description="Seconds to reuse a profile's cached credit balance before refreshing.",
+        description=(
+            "Seconds to reuse a profile's cached credit balance before refreshing "
+            "(video completions also locally deduct estimated credits to cut refresh chatter)."
+        ),
     )
     stagger_seconds: float = Field(
         default=2.5,
@@ -82,7 +85,7 @@ class PlusSettings(BaseSettings):
         description="Default MCP wait cap (well under common 50s tool timeouts).",
     )
     warm_browser_ttl_s: float = Field(
-        default=120.0,
+        default=600.0,
         ge=0.0,
         description=(
             "Seconds to keep an idle per-profile Chrome window warm between pool jobs "
@@ -116,8 +119,41 @@ class PlusSettings(BaseSettings):
         default=15.0,
         ge=0.0,
         description=(
-            "Minimum spacing in seconds between consecutive submits sharing the same "
+            "Minimum spacing in seconds between consecutive video submits sharing the same "
             "egress IP/proxy group (also applied after switching accounts on one egress)."
+        ),
+    )
+    image_egress_min_interval_s: float = Field(
+        default=4.0,
+        ge=0.0,
+        description=(
+            "Minimum spacing in seconds between consecutive image submits sharing the same "
+            "egress IP/proxy group (lighter than video since images cost 0 credits)."
+        ),
+    )
+    egress_jitter_ratio: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Human-like random jitter ratio added on top of egress spacing "
+            "(e.g. 0.4 turns 15s into uniform 15s..21s; 0 disables randomness)."
+        ),
+    )
+    egress_breather_every: int = Field(
+        default=7,
+        ge=0,
+        description=(
+            "Insert a longer human-like breather pause on an egress group after every N "
+            "consecutive video submits (0 disables periodic breathers)."
+        ),
+    )
+    egress_breather_s: float = Field(
+        default=35.0,
+        ge=0.0,
+        description=(
+            "Base duration in seconds of the periodic breather pause on an egress group "
+            "(also jittered by egress_jitter_ratio)."
         ),
     )
     egress_waf_cooldown_s: float = Field(
@@ -127,6 +163,40 @@ class PlusSettings(BaseSettings):
             "Egress-level cooldown in seconds applied to an egress IP/proxy group after "
             "any account on it hits Flow's WAF (PUBLIC_ERROR_UNUSUAL_ACTIVITY), protecting "
             "sibling accounts on the same IP without blocking other residential proxies."
+        ),
+    )
+    sticky_profile_per_egress: bool = Field(
+        default=True,
+        description=(
+            "Keep using the same primary healthy account on an egress IP/proxy instead of "
+            "round-robin switching across accounts on the same IP, cutting multi-account "
+            "farm signals while preserving automatic failover when the primary hits limits."
+        ),
+    )
+    sticky_project: bool = Field(
+        default=True,
+        description=(
+            "Automatically reuse one Flow project per batch/profile when project_id is not "
+            "explicitly specified, avoiding repeated create_project calls and enabling "
+            "in-project reference image reuse."
+        ),
+    )
+    sticky_project_ttl_s: float = Field(
+        default=3600.0,
+        ge=0.0,
+        description=(
+            "Seconds to keep reusing a profile's auto-created sticky Flow project across "
+            "follow-up submits (0 reuses only within the same batch)."
+        ),
+    )
+    max_inflight_videos_per_profile: int = Field(
+        default=2,
+        ge=1,
+        le=4,
+        description=(
+            "Maximum concurrent in-flight video renders pipelined on one profile via "
+            "dedicated tabs (submit clicks remain strictly serialized and egress-paced; "
+            "1 disables pipelined rendering)."
         ),
     )
     state_db_path: Path | None = Field(

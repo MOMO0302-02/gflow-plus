@@ -228,6 +228,7 @@ class SubmitObserveMixin(MentionMixin):
         request_check: Callable[[str, str], GFlowError | None] | None = None,
         adopt_ids: tuple[str, ...] = (),
         adopt_prompt: str | None = None,
+        on_submit_done: Callable[[], None] | None = None,
     ) -> GenerationRecord:
         """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
         replies until the record is terminal. Fires ``on_started`` as soon as the
@@ -614,6 +615,16 @@ class SubmitObserveMixin(MentionMixin):
                 maybe = on_started(started)
                 if asyncio.iscoroutine(maybe):
                     await maybe
+            # The submit is confirmed by Flow: remove request-side route guards before
+            # releasing the submit gate so sibling tabs can submit cleanly while this
+            # tab quietly observes `jwpduf`/`as29s` until completion.
+            if on_submit_done is not None:
+                page.remove_listener("request", on_request)
+                try:
+                    await page.unroute(BATCHEXECUTE_GLOB, guard)
+                except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+                    log.debug("migrated.submit_unroute_failed", error=type(exc).__name__)
+                on_submit_done()
             final = await self._await_terminal(
                 terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
             )

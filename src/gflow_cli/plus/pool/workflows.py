@@ -8,10 +8,13 @@ using ``job:<label>`` references in path or ``media_id`` fields, plus explicit
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
 from difflib import get_close_matches
+from pathlib import Path
 from typing import Any, cast
 
+from gflow_cli.api.video import is_media_uuid
 from gflow_cli.plus.pool.models import JobKind, PoolJob
 
 JOB_REF_PREFIX = "job:"
@@ -216,28 +219,136 @@ def _apply_media_id_ref(payload: dict[str, Any], dep_jobs: dict[str, PoolJob]) -
     return None
 
 
+def _sha256_file(path_str: str) -> str | None:
+    path = Path(path_str)
+    if not path.is_file():
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _upstream_in_project_asset(
+    upstream: PoolJob,
+    field_name: str,
+) -> tuple[str, str, str, str, str, str] | None:
+    """Return ``(media_id, display_name, project_id, local_path, sha256, profile)`` when an
+    upstream job produced a catalogued in-project asset reusable without re-uploading."""
+    result = upstream.result or {}
+    media_id = result.get("media_id")
+    display_name = result.get("display_name")
+    project_id = result.get("project_id") or upstream.payload.get("project_id")
+    profile = upstream.assigned_profile
+    if (
+        not isinstance(media_id, str)
+        or not is_media_uuid(media_id)
+        or not isinstance(display_name, str)
+        or not display_name.strip()
+        or not isinstance(project_id, str)
+        or not project_id.strip()
+        or not profile
+        or profile == "cached"
+    ):
+        return None
+    local_path = _first_output_path(upstream, field_name)
+    sha = _sha256_file(local_path)
+    if sha is None:
+        return None
+    return media_id, display_name.strip(), project_id.strip(), local_path, sha, profile
+
+
 def materialize_payload(
     job: PoolJob,
     dep_jobs: dict[str, PoolJob],
 ) -> tuple[dict[str, Any], str | None]:
     """Substitute ``job:<job_id>`` placeholders using succeeded upstream jobs.
 
-    Returns ``(resolved_payload, inferred_profile)`` where ``inferred_profile``
-    is populated when ``media_id`` was inherited from an upstream job.
+    When an upstream image job produced a catalogued asset in the same project
+    (``media_id`` + ``display_name`` + ``project_id``), downstream ``i2v`` and
+    ``i2i`` jobs automatically bind it in-place (zero re-upload, with local file
+    fallback) and inherit the upstream profile + project_id.
+
+    Returns ``(resolved_payload, inferred_profile)``.
     """
     payload = dict(job.payload)
+    inferred_profile: str | None = None
+    explicit_project = payload.get("project_id")
+
     for key in _PATH_REF_FIELDS:
         val = payload.get(key)
-        if is_job_ref(val):
-            payload[key] = _first_output_path(_lookup_dep(dep_jobs, str(val), key), key)
+        if not is_job_ref(val):
+            continue
+        upstream = _lookup_dep(dep_jobs, str(val), key)
+        reusable = _upstream_in_project_asset(upstream, key) if job.kind == "video" else None
+        if reusable is not None:
+            media_id, display_name, proj_id, local_path, sha, up_profile = reusable
+            same_project = not explicit_project or str(explicit_project) == proj_id
+            same_profile = not inferred_profile or inferred_profile == up_profile
+            if same_project and same_profile:
+                ref_prefix = "start_image_ref" if key == "start_image" else "end_image_ref"
+                payload.pop(key, None)
+                payload[ref_prefix] = media_id
+                payload[f"{ref_prefix}_display_name"] = display_name
+                payload[f"{ref_prefix}_local_path"] = local_path
+                payload[f"{ref_prefix}_local_sha256"] = sha
+                if not payload.get("project_id"):
+                    payload["project_id"] = proj_id
+                    explicit_project = proj_id
+                inferred_profile = up_profile
+                continue
+        payload[key] = _first_output_path(upstream, key)
+
     for key in _LIST_REF_FIELDS:
         raw = payload.get(key)
-        if isinstance(raw, list):
-            payload[key] = [
-                _first_output_path(_lookup_dep(dep_jobs, str(e), key), key) if is_job_ref(e) else e
-                for e in cast("list[object]", raw)
+        if not isinstance(raw, list):
+            continue
+        entries = cast("list[object]", raw)
+        if job.kind == "image" and key == "ref_paths" and entries and all(
+            is_job_ref(e) for e in entries
+        ):
+            assets = [
+                _upstream_in_project_asset(_lookup_dep(dep_jobs, str(e), key), key)
+                for e in entries
             ]
-    inferred_profile = _apply_media_id_ref(payload, dep_jobs)
+            if all(a is not None for a in assets):
+                typed_assets = [a for a in assets if a is not None]
+                projs = {a[2] for a in typed_assets}
+                profs = {a[5] for a in typed_assets}
+                if (
+                    len(projs) == 1
+                    and len(profs) == 1
+                    and (not explicit_project or str(explicit_project) in projs)
+                    and (not inferred_profile or inferred_profile in profs)
+                ):
+                    proj_id = next(iter(projs))
+                    up_profile = next(iter(profs))
+                    existing_refs = list(payload.get("refs") or [])
+                    ref_meta: dict[str, dict[str, str]] = dict(payload.get("ref_meta") or {})
+                    for media_id, display_name, pid, local_path, sha, _prof in typed_assets:
+                        existing_refs.append(media_id)
+                        ref_meta[media_id] = {
+                            "display_name": display_name,
+                            "local_path": local_path,
+                            "local_sha256": sha,
+                            "flow_project_id": pid,
+                        }
+                    payload["refs"] = existing_refs
+                    payload["ref_meta"] = ref_meta
+                    payload.pop(key, None)
+                    if not payload.get("project_id"):
+                        payload["project_id"] = proj_id
+                        explicit_project = proj_id
+                    inferred_profile = up_profile
+                    continue
+        payload[key] = [
+            _first_output_path(_lookup_dep(dep_jobs, str(e), key), key) if is_job_ref(e) else e
+            for e in entries
+        ]
+
+    media_inferred = _apply_media_id_ref(payload, dep_jobs)
+    if media_inferred and not inferred_profile:
+        inferred_profile = media_inferred
     return payload, inferred_profile
 
 

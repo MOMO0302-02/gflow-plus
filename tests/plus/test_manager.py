@@ -40,6 +40,9 @@ def _make_manager(tmp_path: Path, executor: Any) -> PoolJobManager:
         state_db_path=tmp_path / "plus_state.db",
         stagger_seconds=0.0,
         egress_min_interval_s=0.0,
+        image_egress_min_interval_s=0.0,
+        egress_jitter_ratio=0.0,
+        egress_breather_every=0,
         profile_proxies=(
             "acc_a=http://127.0.0.1:7891,"
             "acc_b=http://127.0.0.1:7892,"

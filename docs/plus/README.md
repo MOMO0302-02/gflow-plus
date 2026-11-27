@@ -37,7 +37,7 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | `gflow_plus_job_status` | 单个任务、整批或最近任务的交付记录（批量/列表默认精简回包，`verbose=true` 返回完整尝试日志） | 否 |
 | `gflow_plus_cancel_job` | 取消还在排队的任务；已经在跑的停不下来 | 否 |
 | `gflow_plus_retry_job` | 重跑单个失败/已取消任务或整批失败项（`may_have_spent=true` 或 `indeterminate` 默认拒跑，需显式 `force_spent=true`） | 是 |
-| `gflow_plus_profile_control` | 清除冷却、无头续期登录态、临时禁用/恢复账号、运行时绑定/解绑单账号代理（`set_proxy`/`clear_proxy`）、关闭空闲热浏览器 | 否 |
+| `gflow_plus_profile_control` | 清除冷却与 AIMD 退避、无头续期登录态、临时禁用/恢复账号、运行时绑定/解绑单账号代理（`set_proxy`/`clear_proxy`）、清除粘性项目（`clear_sticky_project`）、关闭空闲热浏览器 | 否 |
 | `gflow_plus_sync_accounts` | 升级或切换 `GFLOW_CLI_HOME` 后同步已登录账号：自动探测系统默认目录或指定备份目录导入缺失账号、延续默认账号、清理 `plus_state.db` 孤儿记录并刷新余额 | 否 |
 | `gflow_plus_list_media` | 跨所有账号检索本地 `gflow.db` 里的图片和视频（返回 `media_id`、归属账号、项目 ID 和本地路径） | 否 |
 | `gflow_plus_hide_taskbar` | 立即隐藏一次任务栏里的 gflow Chrome | 否 |
@@ -58,7 +58,7 @@ gflow plus pool status [--json]
 gflow plus pool pick --kind video|image [--json]
 gflow plus pool jobs [--batch-id ID] [--status STATUS] [--limit N] [--json]
 gflow plus pool retry [--job-id ID] [--batch-id ID] [--force-spent] [--profile NAME] [--json]  # 会花积分
-gflow plus pool profile-control clear_cooldown|renew|exclude|include|close_browser|set_proxy|clear_proxy [--profile NAME] [--proxy URL] [--json]
+gflow plus pool profile-control clear_cooldown|renew|exclude|include|close_browser|set_proxy|clear_proxy|clear_sticky_project [--profile NAME] [--proxy URL] [--json]
 gflow plus media [--kind all|image|video] [--profile NAME] [--query TEXT] [--limit N] [--json]
 gflow plus upscale MEDIA_ID [--media-kind image|video] [--scale SCALE] [--json]  # 视频 4k 会花积分
 gflow plus extend MEDIA_ID PROMPT [--aspect 9:16|16:9] [--max-credits N] [--json]  # 会花积分
@@ -76,19 +76,27 @@ gflow plus hide-taskbar [--json]
 | `GFLOW_PLUS_PROFILES` | 空（全部） | 只调度这些账号，逗号分隔 |
 | `GFLOW_PLUS_EXCLUDED_PROFILES` | 空 | 不参与调度的账号 |
 | `GFLOW_PLUS_MIN_VIDEO_CREDITS` | `20` | 余额低于此值的账号不接视频 |
-| `GFLOW_PLUS_CREDIT_CACHE_TTL_S` | `300` | 余额缓存秒数；提交视频前过期会自动重读 |
+| `GFLOW_PLUS_CREDIT_CACHE_TTL_S` | `600` | 余额缓存秒数；视频完成后会在本地预扣估算积分，减少无谓查余额 |
 | `GFLOW_PLUS_STAGGER_SECONDS` | `2.5` | 不同账号启动浏览器的最小间隔 |
 | `GFLOW_PLUS_RATE_LIMIT_COOLDOWN_S` | `180` | 限流 / 余额不足后的冷却 |
 | `GFLOW_PLUS_AUTH_ERROR_COOLDOWN_S` | `1800` | 登录失效后的冷却 |
 | `GFLOW_PLUS_TRANSIENT_COOLDOWN_S` | `30` | 提交前界面 / 网络问题后的冷却 |
 | `GFLOW_PLUS_WAF_COOLDOWN_S` | `600` | "检测到异常活动"后的单账号冷却 |
 | `GFLOW_PLUS_PROFILE_PROXIES` | 空 | 按账号绑定独立代理（逗号分隔 `profile=scheme://host:port`，不含密码）；也可用 `profile-control set_proxy` 运行时持久化绑定 |
-| `GFLOW_PLUS_MAX_CONCURRENT_PER_EGRESS` | `1` | 同一出口 IP/代理组的最大并发数（默认 `1` 防同 IP 连坐 WAF；不同代理组完全并发；`0` 不限） |
-| `GFLOW_PLUS_EGRESS_MIN_INTERVAL_S` | `15` | 同一出口组连续提交或跨账号切换的最小间隔秒数 |
+| `GFLOW_PLUS_MAX_CONCURRENT_PER_EGRESS` | `1` | 同一出口 IP/代理组的最大跨号并发数（默认 `1` 防同 IP 连坐 WAF；不同代理组完全并发；`0` 不限） |
+| `GFLOW_PLUS_EGRESS_MIN_INTERVAL_S` | `15` | 同一出口组连续视频提交或跨账号切换的基础最小间隔秒数 |
+| `GFLOW_PLUS_IMAGE_EGRESS_MIN_INTERVAL_S` | `4` | 同一出口组连续图片提交的基础最小间隔秒数（0 积分图片更轻量） |
+| `GFLOW_PLUS_EGRESS_JITTER_RATIO` | `0.4` | 出口间隔的拟人随机抖动比例（`0.4` 即在基础间隔的 `1.0x~1.4x` 间随机，遇 WAF/429 自动触发 AIMD 退避倍率并逐步恢复） |
+| `GFLOW_PLUS_EGRESS_BREATHER_EVERY` | `7` | 同一出口组每连续完成 N 条视频插入一次较长呼吸停顿（`0` 关闭） |
+| `GFLOW_PLUS_EGRESS_BREATHER_S` | `35` | 周期呼吸停顿的基础秒数（同样叠加随机抖动与退避倍率） |
 | `GFLOW_PLUS_EGRESS_WAF_COOLDOWN_S` | `180` | 某账号触发 WAF 后对其所属出口组施加的软冷却秒数（保护同 IP 其他号不顶上送死，不影响其他独立代理组） |
+| `GFLOW_PLUS_STICKY_PROFILE_PER_EGRESS` | `1` | 单出口组内锁定主力粘性账号，不来回切号制造多号特征；仅当主力号冷却/余额不足时无缝切到备用号 |
+| `GFLOW_PLUS_STICKY_PROJECT` | `1` | 未显式指定 `project_id` 时，同批次/同账号自动复用同一个 Flow 项目（免重复建项目与重复上传参考图，`job:<label>` 同项目关键帧 0 二次上传） |
+| `GFLOW_PLUS_STICKY_PROJECT_TTL_S` | `3600` | 账号级粘性项目的自动复用有效期秒数（`0` 仅同批复用） |
+| `GFLOW_PLUS_MAX_INFLIGHT_VIDEOS_PER_PROFILE` | `2` | 单账号通过独立标签页流水线并发渲染的最大在飞视频数（提交点击严格串行+出口节流，拿到提交回执后立即释放提交门禁，同 IP 绝不跨号并发；`1` 关闭流水线） |
 | `GFLOW_PLUS_MAX_FAILOVER_ATTEMPTS` | `3` | 一个任务最多换几个账号 |
 | `GFLOW_PLUS_DEFAULT_WAIT_TIMEOUT_S` | `25` | `wait_jobs` 默认等待秒数（上限 35） |
-| `GFLOW_PLUS_WARM_BROWSER_TTL_S` | `120` | 单账号空闲热浏览器保活秒数（`0` 关闭复用） |
+| `GFLOW_PLUS_WARM_BROWSER_TTL_S` | `600` | 单账号空闲热浏览器保活秒数（`0` 关闭复用） |
 | `GFLOW_PLUS_HIDE_SYNC_TOOLS` | `0` | 设为 `1` 隐藏原版阻塞式生成/放大 MCP 工具，避免 AI 误调超时 |
 | `GFLOW_PLUS_STATE_DB_PATH` | `<GFLOW_CLI_HOME>/plus_state.db` | Plus 自己的状态库，不动官方 `gflow.db` |
 | `GFLOW_PLUS_HIDE_TASKBAR` | `1` | `0` 关闭任务栏隐藏 |

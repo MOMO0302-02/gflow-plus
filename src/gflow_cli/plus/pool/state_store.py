@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS plus_account_state (
     last_error TEXT,
     last_used_at REAL,
     disabled INTEGER NOT NULL DEFAULT 0,
-    proxy TEXT
+    proxy TEXT,
+    sticky_project_id TEXT,
+    sticky_project_updated_at REAL
 );
 
 CREATE TABLE IF NOT EXISTS plus_egress_state (
@@ -56,7 +58,10 @@ CREATE TABLE IF NOT EXISTS plus_egress_state (
     cooldown_until REAL,
     cooldown_reason TEXT,
     last_used_at REAL,
-    last_profile TEXT
+    last_profile TEXT,
+    backoff_multiplier REAL NOT NULL DEFAULT 1.0,
+    consecutive_successes INTEGER NOT NULL DEFAULT 0,
+    videos_since_breather INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -105,6 +110,28 @@ class PlusStateStore:
                 )
             if "proxy" not in acc_cols:
                 con.execute("ALTER TABLE plus_account_state ADD COLUMN proxy TEXT")
+            if "sticky_project_id" not in acc_cols:
+                con.execute("ALTER TABLE plus_account_state ADD COLUMN sticky_project_id TEXT")
+            if "sticky_project_updated_at" not in acc_cols:
+                con.execute(
+                    "ALTER TABLE plus_account_state ADD COLUMN sticky_project_updated_at REAL"
+                )
+            eg_cols = {r["name"] for r in con.execute("PRAGMA table_info(plus_egress_state)")}
+            if "backoff_multiplier" not in eg_cols:
+                con.execute(
+                    "ALTER TABLE plus_egress_state ADD COLUMN "
+                    "backoff_multiplier REAL NOT NULL DEFAULT 1.0"
+                )
+            if "consecutive_successes" not in eg_cols:
+                con.execute(
+                    "ALTER TABLE plus_egress_state ADD COLUMN "
+                    "consecutive_successes INTEGER NOT NULL DEFAULT 0"
+                )
+            if "videos_since_breather" not in eg_cols:
+                con.execute(
+                    "ALTER TABLE plus_egress_state ADD COLUMN "
+                    "videos_since_breather INTEGER NOT NULL DEFAULT 0"
+                )
 
     @property
     def db_path(self) -> Path:
@@ -141,18 +168,24 @@ class PlusStateStore:
         disabled: bool | None = None,
         proxy: str | None = None,
         clear_proxy: bool = False,
+        sticky_project_id: str | None = None,
+        sticky_project_updated_at: float | None = None,
+        clear_sticky_project: bool = False,
     ) -> None:
         # One statement, so an update never reads a row another process is about to change:
-        # a field left as None keeps the stored value; clear_cooldown/clear_proxy null their fields.
+        # a field left as None keeps the stored value; clear_* flags null their fields.
         disabled_val = None if disabled is None else (1 if disabled else 0)
         proxy_val = None if clear_proxy else proxy
+        proj_val = None if clear_sticky_project else sticky_project_id
+        proj_ts_val = None if clear_sticky_project else sticky_project_updated_at
         with self._connect() as con:
             con.execute(
                 """
                 INSERT INTO plus_account_state (
                     profile, credits, credits_checked_at, cooldown_until,
-                    cooldown_reason, last_error, last_used_at, disabled, proxy
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?)
+                    cooldown_reason, last_error, last_used_at, disabled, proxy,
+                    sticky_project_id, sticky_project_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
                 ON CONFLICT(profile) DO UPDATE SET
                     credits = COALESCE(excluded.credits, credits),
                     credits_checked_at = COALESCE(excluded.credits_checked_at, credits_checked_at),
@@ -164,7 +197,13 @@ class PlusStateStore:
                     last_used_at = COALESCE(excluded.last_used_at, last_used_at),
                     disabled = COALESCE(?, disabled),
                     proxy = CASE WHEN ? THEN NULL
-                        ELSE COALESCE(excluded.proxy, proxy) END
+                        ELSE COALESCE(excluded.proxy, proxy) END,
+                    sticky_project_id = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(excluded.sticky_project_id, sticky_project_id) END,
+                    sticky_project_updated_at = CASE WHEN ? THEN NULL
+                        ELSE COALESCE(
+                            excluded.sticky_project_updated_at, sticky_project_updated_at
+                        ) END
                 """,
                 (
                     profile,
@@ -176,10 +215,14 @@ class PlusStateStore:
                     last_used_at,
                     disabled_val,
                     proxy_val,
+                    proj_val,
+                    proj_ts_val,
                     clear_cooldown,
                     clear_cooldown,
                     disabled_val,
                     clear_proxy,
+                    clear_sticky_project,
+                    clear_sticky_project,
                 ),
             )
 
@@ -191,8 +234,21 @@ class PlusStateStore:
                 "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
             )
             con.execute(
-                "UPDATE plus_egress_state SET cooldown_until = NULL, cooldown_reason = NULL "
-                "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL"
+                "UPDATE plus_egress_state "
+                "SET cooldown_until = NULL, cooldown_reason = NULL, "
+                "backoff_multiplier = 1.0, consecutive_successes = 0 "
+                "WHERE cooldown_until IS NOT NULL OR cooldown_reason IS NOT NULL "
+                "OR backoff_multiplier != 1.0"
+            )
+            return cur.rowcount
+
+    def clear_all_sticky_projects(self) -> int:
+        """Clear cached sticky Flow projects across every stored profile."""
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE plus_account_state "
+                "SET sticky_project_id = NULL, sticky_project_updated_at = NULL "
+                "WHERE sticky_project_id IS NOT NULL"
             )
             return cur.rowcount
 
@@ -226,21 +282,28 @@ class PlusStateStore:
         cooldown_reason: str | None = None,
         last_used_at: float | None = None,
         last_profile: str | None = None,
+        backoff_multiplier: float | None = None,
+        consecutive_successes: int | None = None,
+        videos_since_breather: int | None = None,
         clear_cooldown: bool = False,
     ) -> None:
         with self._connect() as con:
             con.execute(
                 """
                 INSERT INTO plus_egress_state (
-                    egress_key, cooldown_until, cooldown_reason, last_used_at, last_profile
-                ) VALUES (?, ?, ?, ?, ?)
+                    egress_key, cooldown_until, cooldown_reason, last_used_at, last_profile,
+                    backoff_multiplier, consecutive_successes, videos_since_breather
+                ) VALUES (?, ?, ?, ?, ?, COALESCE(?, 1.0), COALESCE(?, 0), COALESCE(?, 0))
                 ON CONFLICT(egress_key) DO UPDATE SET
                     cooldown_until = CASE WHEN ? THEN NULL
                         ELSE COALESCE(excluded.cooldown_until, cooldown_until) END,
                     cooldown_reason = CASE WHEN ? THEN NULL
                         ELSE COALESCE(excluded.cooldown_reason, cooldown_reason) END,
                     last_used_at = COALESCE(excluded.last_used_at, last_used_at),
-                    last_profile = COALESCE(excluded.last_profile, last_profile)
+                    last_profile = COALESCE(excluded.last_profile, last_profile),
+                    backoff_multiplier = COALESCE(?, backoff_multiplier),
+                    consecutive_successes = COALESCE(?, consecutive_successes),
+                    videos_since_breather = COALESCE(?, videos_since_breather)
                 """,
                 (
                     egress_key,
@@ -248,8 +311,14 @@ class PlusStateStore:
                     None if clear_cooldown else cooldown_reason,
                     last_used_at,
                     last_profile,
+                    backoff_multiplier,
+                    consecutive_successes,
+                    videos_since_breather,
                     clear_cooldown,
                     clear_cooldown,
+                    backoff_multiplier,
+                    consecutive_successes,
+                    videos_since_breather,
                 ),
             )
 

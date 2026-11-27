@@ -9,11 +9,12 @@ reuse its live Chrome window instead of paying a cold start every time.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import struct
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -282,6 +283,7 @@ async def execute_via_worker(
     payload: dict[str, Any],
     *,
     proxy: str | None = None,
+    on_submit_done: Callable[[], None] | None = None,
 ) -> ExecutionOutcome:
     """Execute one generation, upscale, or extend payload on ``profile``."""
     try:
@@ -331,6 +333,7 @@ async def execute_via_worker(
         profile_name=profile,
         db_path=str(db_path),
         client_opener=_open_client,
+        on_submit_done=on_submit_done,
     )
     try:
         worker.repo.enqueue_task(
@@ -565,10 +568,17 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
 
     if task.status == "completed":
         paths = _resolve_output_paths(task, db_path=db_path)
+        meta = _resolve_catalog_metadata(task.flow_media_id, db_path=db_path)
+        project_id = meta.get("project_id") or (
+            str(payload["project_id"]) if payload.get("project_id") else None
+        )
         return ExecutionOutcome(
             status="succeeded",
             profile=profile,
             media_id=task.flow_media_id,
+            project_id=project_id,
+            display_name=meta.get("display_name"),
+            quoted_credits=meta.get("quoted_credits"),
             output_paths=paths,
             model=model,
             aspect=aspect,
@@ -587,6 +597,7 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
         status=status,
         profile=profile,
         media_id=task.flow_media_id,
+        project_id=str(payload["project_id"]) if payload.get("project_id") else None,
         model=model,
         aspect=aspect,
         duration=duration,
@@ -595,6 +606,47 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
         charged=charged,
         exit_code=int(raw_exit) if isinstance(raw_exit, int) else None,
     )
+
+
+def _resolve_catalog_metadata(media_id: str | None, *, db_path: Path) -> dict[str, Any]:
+    """Read ``flow_project_id``, ``display_name``, and ``quoted_credits`` from ``gflow.db``."""
+    if not media_id or not db_path.exists():
+        return {}
+    con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    meta: dict[str, Any] = {}
+    try:
+        row = con.execute(
+            """
+            SELECT flow_project_id, metadata_json
+            FROM assets
+            WHERE flow_media_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (media_id,),
+        ).fetchone()
+        if row is not None:
+            if row[0]:
+                meta["project_id"] = str(row[0])
+            raw_meta = row[1]
+            if isinstance(raw_meta, str) and raw_meta.strip():
+                try:
+                    parsed = json.loads(raw_meta)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    parsed_dict = cast("dict[str, Any]", parsed)
+                    dname = parsed_dict.get("display_name")
+                    if isinstance(dname, str) and dname.strip():
+                        meta["display_name"] = dname.strip()
+                    qc = parsed_dict.get("quoted_credits")
+                    if isinstance(qc, int) and not isinstance(qc, bool) and qc >= 0:
+                        meta["quoted_credits"] = qc
+    except sqlite3.OperationalError:
+        return meta
+    finally:
+        con.close()
+    return meta
 
 
 def _resolve_output_paths(task: QueueTask, *, db_path: Path) -> tuple[str, ...]:

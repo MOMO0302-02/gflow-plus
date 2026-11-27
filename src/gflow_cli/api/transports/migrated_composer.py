@@ -453,6 +453,7 @@ async def _submit_video_with_evidence(
     expect_end_media_id: str | None,
     reference_ids: tuple[str, ...],
     entity_ids: tuple[str, ...],
+    on_submit_done: Callable[[], None] | None = None,
 ) -> GenerationRecord:
     started_ids: list[str] = []
 
@@ -473,6 +474,7 @@ async def _submit_video_with_evidence(
             adopt_prompt=(
                 request.prompt if request.mode is Mode.T2V and request.count == 1 else None
             ),
+            on_submit_done=on_submit_done,
         )
     except Exception as exc:
         if quoted_credits is not None:
@@ -493,15 +495,16 @@ async def run_video(
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
+    on_submit_done: Callable[[], None] | None = None,
 ) -> VideoResult:
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
     t2v, i2v from local start (and end) frames (uploaded through the editor and
-    bound on the Start/End chips by file name), and r2v from local ``--ref``
-    files. A frame or reference given by UUID / ``@Name`` is not ported yet. The
-    project is created by ``FlowApiClient`` before this runs (#864), so reaching
-    here without one means a caller bypassed the client.
+    bound on the Start/End chips by file name), in-project start/end frames given
+    by media UUID + display name (with local fallback upload), and r2v from local
+    ``--ref`` files. The project is created by ``FlowApiClient`` before this runs
+    (#864), so reaching here without one means a caller bypassed the client.
     """
     unported = _unported_form(request)
     pid, composer, surface = await _prepare_video_composer(
@@ -529,10 +532,27 @@ async def run_video(
         reference_ids: tuple[str, ...] = ()
         entity_ids: tuple[str, ...] = ()
         frame = request.start_image
-        if request.mode is Mode.I2V and frame is not None:
-            media_id = await composer.attach_start_frame(page, pid, frame)
-        if request.mode is Mode.I2V and request.end_image is not None:
-            end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
+        if request.mode is Mode.I2V:
+            if request.start_image_ref_id and request.start_image_ref_display_name:
+                media_id = await composer.attach_existing_or_upload_start_frame(
+                    page,
+                    pid,
+                    media_id=request.start_image_ref_id,
+                    display_name=request.start_image_ref_display_name,
+                    fallback_path=request.start_image_ref_local_path or frame,
+                )
+            elif frame is not None:
+                media_id = await composer.attach_start_frame(page, pid, frame)
+            if request.end_image_ref_id and request.end_image_ref_display_name:
+                end_media_id = await composer.attach_existing_or_upload_end_frame(
+                    page,
+                    pid,
+                    media_id=request.end_image_ref_id,
+                    display_name=request.end_image_ref_display_name,
+                    fallback_path=request.end_image_ref_local_path or request.end_image,
+                )
+            elif request.end_image is not None:
+                end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
         if request.mode is Mode.R2V and request.reference_images:
             reference_ids = await composer.attach_references(page, pid, request.reference_images)
         if request.reference_entities:
@@ -574,6 +594,7 @@ async def run_video(
         expect_end_media_id=end_media_id,
         reference_ids=reference_ids,
         entity_ids=entity_ids,
+        on_submit_done=on_submit_done,
     )
     status = VideoStatus(
         media_id=record.media_id,

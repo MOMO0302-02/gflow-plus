@@ -726,6 +726,7 @@ class GenerationSurface(WorkspaceSurface):
         on_started: VideoStartedCallback | None = None,
         on_checkpoint: GenerationCheckpointObserver | None = None,
         name_resolver: Callable[[str], str | None] | None = None,
+        on_submit_done: Callable[[], None] | None = None,
     ) -> VideoResult:
         """Generate a video via the transport's ``generate_video`` method.
 
@@ -792,9 +793,11 @@ class GenerationSurface(WorkspaceSurface):
         try:
             # Kwarg passed only when set — same #546 compat rule as
             # _drive_images_generation.
-            resolver_kw: dict[str, Any] = (
-                {} if name_resolver is None else {"name_resolver": name_resolver}
-            )
+            extra_kw: dict[str, Any] = {}
+            if name_resolver is not None:
+                extra_kw["name_resolver"] = name_resolver
+            if on_submit_done is not None:
+                extra_kw["on_submit_done"] = on_submit_done
             return await self.transport.generate_video(
                 request=req,
                 project_id=project_id,
@@ -802,7 +805,7 @@ class GenerationSurface(WorkspaceSurface):
                 poll_timeout_s=poll_timeout_s,
                 download=download,
                 on_started=wrapped_on_started,
-                **resolver_kw,
+                **extra_kw,
             )
 
         except Exception as e:

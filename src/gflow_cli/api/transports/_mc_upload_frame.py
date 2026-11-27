@@ -107,6 +107,59 @@ class UploadFrameMixin(SettingsPaneMixin):
         )
         return media_id
 
+    async def attach_existing_or_upload_start_frame(
+        self,
+        page: Page,
+        project_id: str,
+        *,
+        media_id: str,
+        display_name: str,
+        fallback_path: Path | None = None,
+    ) -> str:
+        """Bind an image already present in ``project_id`` onto the Start chip without
+        re-uploading it; fall back to uploading ``fallback_path`` if the picker cannot
+        locate ``display_name`` (e.g. Flow rewrote the caption or the asset is missing)."""
+        try:
+            await self._pick_frame_by_name(page, display_name, media_id)
+            log.info("migrated.start_frame_reused_in_project", media_id=media_id)
+            return media_id
+        except ReferenceNotFoundError:
+            if fallback_path is None or not fallback_path.is_file():
+                raise
+            log.info(
+                "migrated.start_frame_reuse_fallback_upload",
+                media_id=media_id,
+                fallback=str(fallback_path.name),
+            )
+            return await self.attach_start_frame(page, project_id, fallback_path)
+
+    async def attach_existing_or_upload_end_frame(
+        self,
+        page: Page,
+        project_id: str,
+        *,
+        media_id: str,
+        display_name: str,
+        fallback_path: Path | None = None,
+    ) -> str:
+        """Bind an image already present in ``project_id`` onto the End chip without
+        re-uploading it; fall back to uploading ``fallback_path`` on picker miss."""
+        try:
+            await self._pick_frame_by_name(
+                page, display_name, media_id, chip_label="End", expect_bound_chips=2
+            )
+            log.info("migrated.end_frame_reused_in_project", media_id=media_id)
+            return media_id
+        except ReferenceNotFoundError:
+            if fallback_path is None or not fallback_path.is_file():
+                raise
+            log.info(
+                "migrated.end_frame_reuse_fallback_upload",
+                media_id=media_id,
+                fallback=str(fallback_path.name),
+            )
+            return await self.attach_end_frame(page, project_id, fallback_path)
+
     async def upload(self, page: Page, project_id: str, image_path: Path) -> tuple[str, str]:
         """Upload ``image_path`` into the project; ``(media_id, run-unique caption)``.
 

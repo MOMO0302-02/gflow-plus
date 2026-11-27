@@ -275,6 +275,7 @@ def pool_retry(
             "close_browser",
             "set_proxy",
             "clear_proxy",
+            "clear_sticky_project",
         ]
     ),
 )
@@ -302,6 +303,9 @@ def pool_profile_control(
             return {"status": "ok", "action": action, "closed": closed}
         if action == "clear_proxy":
             cleared = await scheduler.clear_proxy(profile)
+            return {"status": "ok", "action": action, "cleared": cleared}
+        if action == "clear_sticky_project":
+            cleared = scheduler.clear_sticky_project(profile)
             return {"status": "ok", "action": action, "cleared": cleared}
         if not profile or profile == "*":
             raise click.BadParameter(f"action={action!r} requires --profile <name>")

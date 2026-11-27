@@ -270,6 +270,9 @@ async def test_submit_upscale_and_extend_confine_paths_and_auto_route(
         state_db_path=tmp_path / "plus_state.db",
         stagger_seconds=0.0,
         egress_min_interval_s=0.0,
+        image_egress_min_interval_s=0.0,
+        egress_jitter_ratio=0.0,
+        egress_breather_every=0,
         max_concurrent_per_egress=0,
     )
     profiles = [

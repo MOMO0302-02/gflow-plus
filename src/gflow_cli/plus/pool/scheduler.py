@@ -154,7 +154,10 @@ class AccountPoolScheduler:
 
         self._lane_locks: dict[str, asyncio.Lock] = {}
         self._busy_profiles: set[str] = set()
+        self._submitting_profiles: set[str] = set()
+        self._inflight_videos: dict[str, int] = {}
         self._egress_active: dict[str, int] = {}
+        self._egress_active_profiles: dict[str, dict[str, int]] = {}
         self._egress_pacing_locks: dict[str, asyncio.Lock] = {}
         self._egress_last_submit: dict[str, float] = {}
         self._egress_last_finish: dict[str, float] = {}
@@ -184,7 +187,14 @@ class AccountPoolScheduler:
         return lock
 
     def is_busy(self, profile: str) -> bool:
-        return profile in self._busy_profiles
+        return (
+            profile in self._busy_profiles
+            or profile in self._submitting_profiles
+            or self._inflight_videos.get(profile, 0) > 0
+        )
+
+    def inflight_videos(self, profile: str) -> int:
+        return self._inflight_videos.get(profile, 0)
 
     def mark_busy(self, profile: str, busy: bool) -> None:
         if busy:
@@ -225,23 +235,90 @@ class AccountPoolScheduler:
         limit = self._settings.max_concurrent_per_egress
         if limit <= 0:
             return False
-        return self._egress_active.get(egress_key, 0) >= limit
+        if self._egress_active.get(egress_key, 0) >= limit:
+            return True
+        active_profs = self._egress_active_profiles.get(egress_key)
+        return bool(active_profs and len(active_profs) >= limit)
 
-    def reserve_lane(self, profile: str) -> str:
-        """Synchronously reserve both profile lane and egress slot before yielding control."""
+    def can_schedule_profile_now(self, profile: str, egress_key: str, kind: JobKind) -> bool:
+        """True if ``profile`` can enter the submit gate right now for ``kind``.
+
+        Enforces two invariants simultaneously:
+        1. Same-egress submit concurrency never exceeds ``max_concurrent_per_egress``
+           and never mixes distinct accounts beyond that cap (no cross-account same-IP
+           concurrency when cap == 1).
+        2. A single account may pipeline up to ``max_inflight_videos_per_profile``
+           videos (submit clicks serialized; rendering tabs concurrent).
+        """
+        if profile in self._submitting_profiles or profile in self._busy_profiles:
+            return False
+        inflight = self._inflight_videos.get(profile, 0)
+        if kind == "video":
+            if inflight >= self._settings.max_inflight_videos_per_profile:
+                return False
+        elif inflight > 0:
+            return False
+
+        limit = self._settings.max_concurrent_per_egress
+        if limit > 0:
+            if self._egress_active.get(egress_key, 0) >= limit:
+                return False
+            active_profs = self._egress_active_profiles.get(egress_key, {})
+            if profile not in active_profs and len(active_profs) >= limit:
+                return False
+        return True
+
+    def reserve_lane(self, profile: str, *, kind: JobKind = "image") -> str:
+        """Synchronously reserve profile submit gate, inflight slot, and egress slot."""
         egress = self.egress_group(profile)
-        self._busy_profiles.add(profile)
+        self._submitting_profiles.add(profile)
         self._egress_active[egress] = self._egress_active.get(egress, 0) + 1
+        if kind == "video":
+            self._inflight_videos[profile] = self._inflight_videos.get(profile, 0) + 1
+        else:
+            self._busy_profiles.add(profile)
+        per_egress = self._egress_active_profiles.setdefault(egress, {})
+        per_egress[profile] = per_egress.get(profile, 0) + 1
         return egress
 
-    def release_lane(self, profile: str, egress_key: str) -> None:
-        """Release a previously reserved profile lane and egress slot."""
-        self._busy_profiles.discard(profile)
-        cur = self._egress_active.get(egress_key, 0)
-        if cur <= 1:
-            self._egress_active.pop(egress_key, None)
+    def release_submit_gate(self, profile: str, egress_key: str) -> None:
+        """Release the submit gate after Flow accepts a video submit (render stays in flight)."""
+        if profile in self._submitting_profiles:
+            self._submitting_profiles.discard(profile)
+            cur = self._egress_active.get(egress_key, 0)
+            if cur <= 1:
+                self._egress_active.pop(egress_key, None)
+            else:
+                self._egress_active[egress_key] = cur - 1
+
+    def release_lane(
+        self,
+        profile: str,
+        egress_key: str,
+        *,
+        kind: JobKind = "image",
+        submit_already_released: bool = False,
+    ) -> None:
+        """Release all remaining reservations (submit gate if still held + inflight slot)."""
+        if not submit_already_released:
+            self.release_submit_gate(profile, egress_key)
+        if kind == "video":
+            cur_v = self._inflight_videos.get(profile, 0)
+            if cur_v <= 1:
+                self._inflight_videos.pop(profile, None)
+            else:
+                self._inflight_videos[profile] = cur_v - 1
         else:
-            self._egress_active[egress_key] = cur - 1
+            self._busy_profiles.discard(profile)
+        per_egress = self._egress_active_profiles.get(egress_key)
+        if per_egress is not None:
+            cur_p = per_egress.get(profile, 0)
+            if cur_p <= 1:
+                per_egress.pop(profile, None)
+            else:
+                per_egress[profile] = cur_p - 1
+            if not per_egress:
+                self._egress_active_profiles.pop(egress_key, None)
 
     def note_egress_finished(self, egress_key: str, profile: str) -> None:
         """Record completion timestamp on ``egress_key`` for cross-account spacing."""
@@ -249,15 +326,30 @@ class AccountPoolScheduler:
         self._egress_last_finish[egress_key] = now
         self._egress_last_profile[egress_key] = profile
 
-    async def wait_egress_pacing(self, egress_key: str, profile: str) -> float:
-        """Enforce minimum spacing on ``egress_key`` to prevent same-IP WAF bursts.
+    async def wait_egress_pacing(
+        self,
+        egress_key: str,
+        profile: str,
+        *,
+        kind: JobKind = "video",
+    ) -> float:
+        """Enforce adaptive, jittered, kind-aware spacing on ``egress_key``.
 
-        When switching to a different account on the same egress IP, waits at least
-        ``egress_min_interval_s`` after the previous account's completion; on the same
-        account, ensures consecutive submits are also spaced by ``egress_min_interval_s``.
+        - Images use ``image_egress_min_interval_s``; videos/extends/upscales use
+          ``egress_min_interval_s`` (cross-account switches always use at least
+          ``egress_min_interval_s``).
+        - Multiplies base spacing by the egress AIMD ``backoff_multiplier`` (raised
+          after WAF/429 and decayed gradually after consecutive successes).
+        - Applies uniform human-like jitter ``[1.0, 1.0 + egress_jitter_ratio]``.
+        - Inserts a periodic breather pause every ``egress_breather_every`` videos.
         """
-        gap = self._settings.egress_min_interval_s
-        if gap <= 0:
+        base_gap = (
+            self._settings.image_egress_min_interval_s
+            if kind == "image"
+            else self._settings.egress_min_interval_s
+        )
+        switch_gap = self._settings.egress_min_interval_s
+        if base_gap <= 0 and switch_gap <= 0:
             return 0.0
         lock = self._egress_pacing_locks.get(egress_key)
         if lock is None:
@@ -265,11 +357,15 @@ class AccountPoolScheduler:
             self._egress_pacing_locks[egress_key] = lock
         async with lock:
             now = self._clock()
+            egress_st = self._store.get_egress_state(egress_key)
+            raw_mult = egress_st.get("backoff_multiplier")
+            backoff = max(1.0, float(raw_mult)) if isinstance(raw_mult, (int, float)) else 1.0
+            videos_since = int(egress_st.get("videos_since_breather") or 0)
+
             last_submit = self._egress_last_submit.get(egress_key, 0.0)
             last_finish = self._egress_last_finish.get(egress_key, 0.0)
             last_profile = self._egress_last_profile.get(egress_key)
             if last_profile is None:
-                egress_st = self._store.get_egress_state(egress_key)
                 stored_ts = egress_st.get("last_used_at")
                 if isinstance(stored_ts, (int, float)) and float(stored_ts) > last_finish:
                     last_finish = float(stored_ts)
@@ -277,16 +373,83 @@ class AccountPoolScheduler:
                 if isinstance(stored_prof, str) and stored_prof:
                     last_profile = stored_prof
 
+            jitter_ratio = self._settings.egress_jitter_ratio
+            jitter_factor = 1.0 + (
+                random.uniform(0.0, jitter_ratio) if jitter_ratio > 0 else 0.0  # noqa: S311
+            )
+
+            effective_gap = base_gap * backoff * jitter_factor
+            effective_switch_gap = max(base_gap, switch_gap) * backoff * jitter_factor
+
+            breather_triggered = (
+                kind in ("video", "extend")
+                and self._settings.egress_breather_every > 0
+                and self._settings.egress_breather_s > 0
+                and videos_since >= self._settings.egress_breather_every
+            )
+            if breather_triggered:
+                breather_gap = self._settings.egress_breather_s * backoff * jitter_factor
+                effective_gap = max(effective_gap, breather_gap)
+
             wait_s = 0.0
-            if last_submit > 0:
-                wait_s = max(wait_s, gap - (now - last_submit))
-            if last_finish > 0 and last_profile and last_profile != profile:
-                wait_s = max(wait_s, gap - (now - last_finish))
+            if last_submit > 0 and effective_gap > 0:
+                wait_s = max(wait_s, effective_gap - (now - last_submit))
+            if (
+                last_finish > 0
+                and last_profile
+                and last_profile != profile
+                and effective_switch_gap > 0
+            ):
+                wait_s = max(wait_s, effective_switch_gap - (now - last_finish))
+            if breather_triggered and wait_s == 0.0 and last_submit == 0.0:
+                wait_s = effective_gap
             if wait_s > 0:
+                log.debug(
+                    "plus.pool.egress_pacing",
+                    egress_group=egress_key,
+                    profile=profile,
+                    kind=kind,
+                    wait_s=round(wait_s, 2),
+                    backoff=backoff,
+                    breather=breather_triggered,
+                )
                 await self._sleep(wait_s)
+            if breather_triggered:
+                self._store.upsert_egress_state(egress_key, videos_since_breather=0)
             self._egress_last_submit[egress_key] = self._clock()
             self._egress_last_profile[egress_key] = profile
             return wait_s
+
+    def get_sticky_project(self, profile: str) -> str | None:
+        """Return the active non-expired sticky Flow project ID for ``profile``, if any."""
+        if not self._settings.sticky_project or self._settings.sticky_project_ttl_s <= 0:
+            return None
+        st = self._store.get_account_state(profile)
+        pid = st.get("sticky_project_id")
+        updated = st.get("sticky_project_updated_at")
+        if not isinstance(pid, str) or not pid.strip():
+            return None
+        if isinstance(updated, (int, float)):
+            if (self._clock() - float(updated)) > self._settings.sticky_project_ttl_s:
+                return None
+        return pid.strip()
+
+    def set_sticky_project(self, profile: str, project_id: str) -> None:
+        """Persist ``project_id`` as ``profile``'s sticky project."""
+        if not self._settings.sticky_project or not project_id.strip():
+            return
+        self._store.upsert_account_state(
+            profile,
+            sticky_project_id=project_id.strip(),
+            sticky_project_updated_at=self._clock(),
+        )
+
+    def clear_sticky_project(self, profile: str | None = None) -> int:
+        """Clear cached sticky Flow project for one profile or all profiles."""
+        if profile is None or profile == "*":
+            return self._store.clear_all_sticky_projects()
+        self._store.upsert_account_state(profile, clear_sticky_project=True)
+        return 1
 
     async def wait_stagger(self) -> float:
         """Stagger browser launches across profiles to avoid Windows focus theft."""
@@ -342,6 +505,20 @@ class AccountPoolScheduler:
             eg_st = egress_states.get(egress, {})
             eg_cd_until = eg_st.get("cooldown_until")
             eg_in_cooldown = isinstance(eg_cd_until, (int, float)) and float(eg_cd_until) > now
+            raw_proj = st.get("sticky_project_id")
+            raw_proj_ts = st.get("sticky_project_updated_at")
+            sticky_proj: str | None = None
+            if (
+                self._settings.sticky_project
+                and isinstance(raw_proj, str)
+                and raw_proj.strip()
+                and (
+                    self._settings.sticky_project_ttl_s <= 0
+                    or not isinstance(raw_proj_ts, (int, float))
+                    or (now - float(raw_proj_ts)) <= self._settings.sticky_project_ttl_s
+                )
+            ):
+                sticky_proj = raw_proj.strip()
             out.append(
                 AccountHealth(
                     profile=meta.name,
@@ -369,6 +546,8 @@ class AccountPoolScheduler:
                         float(eg_cd_until) if isinstance(eg_cd_until, (int, float)) else None
                     ),
                     egress_cooldown_reason=eg_st.get("cooldown_reason"),
+                    sticky_project_id=sticky_proj,
+                    inflight_videos=self.inflight_videos(meta.name),
                 )
             )
         return out
@@ -452,6 +631,7 @@ class AccountPoolScheduler:
     def health_report(self) -> dict[str, Any]:
         now = self._clock()
         accounts = self.snapshot_health()
+        egress_states = self._store.list_egress_states()
         healthy_accounts = [a for a in accounts if a.healthy]
         known_credits = [a.credits for a in accounts if a.credits is not None]
         egress_summary: dict[str, dict[str, Any]] = {}
@@ -463,13 +643,28 @@ class AccountPoolScheduler:
                     if acc.egress_cooldown_until is not None and acc.egress_cooldown_until > now
                     else 0.0
                 )
+                eg_st = egress_states.get(acc.egress_group, {})
+                raw_mult = eg_st.get("backoff_multiplier")
+                backoff = (
+                    round(float(raw_mult), 2) if isinstance(raw_mult, (int, float)) else 1.0
+                )
+                sticky_prof = (
+                    self._egress_last_profile.get(acc.egress_group)
+                    or eg_st.get("last_profile")
+                )
+                active_map = self._egress_active_profiles.get(acc.egress_group, {})
                 prof_list: list[str] = []
                 egress_profiles[acc.egress_group] = prof_list
                 egress_summary[acc.egress_group] = {
                     "egress_group": acc.egress_group,
                     "profiles": prof_list,
+                    "sticky_profile": (
+                        sticky_prof if self._settings.sticky_profile_per_egress else None
+                    ),
                     "active": self._egress_active.get(acc.egress_group, 0),
+                    "inflight": sum(active_map.values()),
                     "busy": acc.egress_busy,
+                    "backoff_multiplier": backoff,
                     "cooldown_remaining_s": rem,
                     "cooldown_reason": acc.egress_cooldown_reason if rem > 0 else None,
                 }
@@ -485,6 +680,9 @@ class AccountPoolScheduler:
             "warm_browsers": self._browser_pool.warm_profiles(),
             "egress_groups": list(egress_summary.values()),
             "max_concurrent_per_egress": self._settings.max_concurrent_per_egress,
+            "max_inflight_videos_per_profile": self._settings.max_inflight_videos_per_profile,
+            "sticky_profile_per_egress": self._settings.sticky_profile_per_egress,
+            "sticky_project": self._settings.sticky_project,
             "profiles": [a.to_dict(now=now) for a in accounts],
         }
 
@@ -494,7 +692,12 @@ class AccountPoolScheduler:
             return self._store.clear_all_cooldowns()
         egress = self.egress_group(profile)
         self._store.upsert_account_state(profile, clear_cooldown=True, last_error="")
-        self._store.upsert_egress_state(egress, clear_cooldown=True)
+        self._store.upsert_egress_state(
+            egress,
+            clear_cooldown=True,
+            backoff_multiplier=1.0,
+            consecutive_successes=0,
+        )
         return 1
 
     async def set_proxy(self, profile: str, proxy: str) -> str:
@@ -574,10 +777,21 @@ class AccountPoolScheduler:
         allow_busy: bool = False,
         pin_preferred: bool = False,
     ) -> str | None:
-        """Select the best available profile for a job, respecting per-egress concurrency."""
+        """Select the best available profile for a job.
+
+        - Enforces per-egress concurrency and single-profile video pipelining limits.
+        - When ``sticky_profile_per_egress`` is enabled, keeps routing work on each
+          egress group's established primary account instead of round-robin switching
+          accounts on the same IP; automatically fails over when that primary cools
+          down or runs low on credits.
+        """
         candidates = [a for a in self.snapshot_health() if a.healthy and a.profile not in exclude]
         if not allow_busy:
-            candidates = [a for a in candidates if not a.busy and not a.egress_busy]
+            candidates = [
+                a
+                for a in candidates
+                if self.can_schedule_profile_now(a.profile, a.egress_group, kind)
+            ]
         if not candidates:
             return None
 
@@ -590,9 +804,26 @@ class AccountPoolScheduler:
             candidates = [a for a in candidates if a.credits is None or a.credits >= min_need]
             if not candidates:
                 return None
+
+        egress_states = (
+            self._store.list_egress_states() if self._settings.sticky_profile_per_egress else {}
+        )
+
+        def _sticky_rank(acc: AccountHealth) -> int:
+            if not self._settings.sticky_profile_per_egress:
+                return 0
+            sticky = self._egress_last_profile.get(acc.egress_group) or egress_states.get(
+                acc.egress_group, {}
+            ).get("last_profile")
+            if not sticky:
+                return 1
+            return 0 if acc.profile == sticky else 2
+
+        if kind == "video":
             candidates.sort(
                 key=lambda a: (
-                    1 if (a.busy or a.egress_busy) else 0,
+                    0 if self.can_schedule_profile_now(a.profile, a.egress_group, kind) else 1,
+                    _sticky_rank(a),
                     -(a.credits if a.credits is not None else -1),
                     a.last_used_at or 0.0,
                 )
@@ -600,31 +831,87 @@ class AccountPoolScheduler:
             return candidates[0].profile
 
         candidates.sort(
-            key=lambda a: (1 if (a.busy or a.egress_busy) else 0, a.last_used_at or 0.0)
+            key=lambda a: (
+                0 if self.can_schedule_profile_now(a.profile, a.egress_group, kind) else 1,
+                _sticky_rank(a),
+                a.last_used_at or 0.0,
+            )
         )
         return candidates[0].profile
 
-    def record_attempt(self, profile: str, outcome: ExecutionOutcome) -> FailoverDecision:
-        """Update account and egress cooldown/LRU state after one attempt."""
+    def record_attempt(
+        self,
+        profile: str,
+        outcome: ExecutionOutcome,
+        *,
+        kind: JobKind = "image",
+    ) -> FailoverDecision:
+        """Update account/egress cooldown, AIMD backoff, sticky project, and local credits."""
         now = self._clock()
         egress = self.egress_group(profile)
+        eg_st = self._store.get_egress_state(egress)
+        raw_mult = eg_st.get("backoff_multiplier")
+        cur_mult = max(1.0, float(raw_mult)) if isinstance(raw_mult, (int, float)) else 1.0
+        cur_streak = int(eg_st.get("consecutive_successes") or 0)
+        cur_vids = int(eg_st.get("videos_since_breather") or 0)
+
         if outcome.status == "succeeded":
+            new_streak = cur_streak + 1
+            new_mult = cur_mult
+            if cur_mult > 1.0 and new_streak >= 5:
+                new_mult = max(1.0, round(cur_mult * 0.8, 2))
+                new_streak = 0
+            new_vids = cur_vids + (1 if kind in ("video", "extend") else 0)
+
+            # Local credit deduction for paid video/extend completions so we don't
+            # hammer Flow with extra balance checks on every clip.
+            updated_credits: int | None = None
+            updated_checked_at: float | None = None
+            if kind in ("video", "extend") and not outcome.skipped_existing:
+                acc_st = self._store.get_account_state(profile)
+                cached_credits = acc_st.get("credits")
+                if isinstance(cached_credits, int):
+                    spent = (
+                        outcome.quoted_credits
+                        if outcome.quoted_credits is not None
+                        else self._settings.min_video_credits
+                    )
+                    updated_credits = max(0, cached_credits - max(0, spent))
+                    updated_checked_at = now
+
+            sticky_pid = (
+                outcome.project_id
+                if (self._settings.sticky_project and outcome.project_id)
+                else None
+            )
             self._store.upsert_account_state(
                 profile,
+                credits=updated_credits,
+                credits_checked_at=updated_checked_at,
                 last_used_at=now,
                 last_error="",
                 clear_cooldown=True,
+                sticky_project_id=sticky_pid,
+                sticky_project_updated_at=now if sticky_pid else None,
             )
             self._store.upsert_egress_state(
                 egress,
                 last_used_at=now,
                 last_profile=profile,
+                backoff_multiplier=new_mult,
+                consecutive_successes=new_streak,
+                videos_since_breather=new_vids,
                 clear_cooldown=True,
             )
+            self._egress_last_profile[egress] = profile
             return FailoverDecision(retry_other_profile=False, cooldown_s=0.0, cooldown_reason=None)
 
         decision = classify_failover(outcome, self._settings)
         cd_until = now + decision.cooldown_s if decision.cooldown_s > 0 else None
+        err_text = (outcome.error_detail or outcome.error_type or outcome.status or "").lower()
+        clear_stale_proj = any(
+            tok in err_text for tok in ("project not found", "no project found", "404")
+        )
         self._store.upsert_account_state(
             profile,
             credits=0 if decision.mark_credits_zero else None,
@@ -632,7 +919,15 @@ class AccountPoolScheduler:
             cooldown_reason=decision.cooldown_reason,
             last_error=outcome.error_detail or outcome.error_type or outcome.status,
             last_used_at=now,
+            clear_sticky_project=clear_stale_proj,
         )
+        if decision.cooldown_reason in ("waf_unusual_activity", "rate_limited"):
+            new_mult = min(4.0, round(cur_mult * 1.8, 2))
+            new_streak = 0
+        else:
+            new_mult = cur_mult
+            new_streak = cur_streak
+
         if (
             decision.cooldown_reason == "waf_unusual_activity"
             and self._settings.egress_waf_cooldown_s > 0
@@ -642,10 +937,16 @@ class AccountPoolScheduler:
                 cooldown_until=now + self._settings.egress_waf_cooldown_s,
                 cooldown_reason="egress_waf_unusual_activity",
                 last_used_at=now,
-                last_profile=profile,
+                backoff_multiplier=new_mult,
+                consecutive_successes=new_streak,
             )
         else:
-            self._store.upsert_egress_state(egress, last_used_at=now, last_profile=profile)
+            self._store.upsert_egress_state(
+                egress,
+                last_used_at=now,
+                backoff_multiplier=new_mult,
+                consecutive_successes=new_streak,
+            )
         log.info(
             "plus.pool.attempt_failed",
             profile=profile,
@@ -654,5 +955,6 @@ class AccountPoolScheduler:
             charged=outcome.charged,
             retry_other=decision.retry_other_profile,
             cooldown_s=decision.cooldown_s,
+            backoff_multiplier=new_mult,
         )
         return decision

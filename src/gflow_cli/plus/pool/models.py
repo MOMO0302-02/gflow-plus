@@ -32,6 +32,8 @@ class AccountHealth:
     egress_busy: bool = False
     egress_cooldown_until: float | None = None
     egress_cooldown_reason: str | None = None
+    sticky_project_id: str | None = None
+    inflight_videos: int = 0
 
     def to_dict(self, *, now: float) -> dict[str, Any]:
         remaining = 0.0
@@ -56,11 +58,13 @@ class AccountHealth:
             "cookies_present": self.cookies_present,
             "credits": self.credits,
             "busy": self.busy,
+            "inflight_videos": self.inflight_videos,
             "disabled": self.disabled,
             "proxy": self.proxy,
             "egress_group": self.egress_group,
             "egress_busy": self.egress_busy,
             "egress_cooldown_remaining_s": egress_remaining,
+            "sticky_project_id": self.sticky_project_id,
             "cooldown_remaining_s": effective_remaining,
             "cooldown_reason": reason,
             "last_error": self.last_error,
@@ -99,6 +103,9 @@ class ExecutionOutcome:
     status: Literal["succeeded", "failed", "indeterminate"]
     profile: str
     media_id: str | None = None
+    project_id: str | None = None
+    display_name: str | None = None
+    quoted_credits: int | None = None
     output_paths: tuple[str, ...] = ()
     model: str | None = None
     aspect: str | None = None
@@ -111,7 +118,7 @@ class ExecutionOutcome:
 
     def ledger_dict(self) -> dict[str, Any]:
         """Standard delivery ledger aligned with multi-account production tracking."""
-        return {
+        data: dict[str, Any] = {
             "profile": self.profile,
             "media_id": self.media_id,
             "output_paths": list(self.output_paths),
@@ -120,6 +127,13 @@ class ExecutionOutcome:
             "duration": self.duration,
             "skipped_existing": self.skipped_existing,
         }
+        if self.project_id:
+            data["project_id"] = self.project_id
+        if self.display_name:
+            data["display_name"] = self.display_name
+        if self.quoted_credits is not None:
+            data["quoted_credits"] = self.quoted_credits
+        return data
 
 
 def _empty_attempts() -> list[dict[str, Any]]:

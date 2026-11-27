@@ -9,6 +9,7 @@ a bounded timeout (<= 35s).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -72,8 +73,10 @@ class PoolJobManager:
             settings=self._settings,
         )
         self._executor = executor or execute_via_worker
+        self._executor_accepts_submit_hook = _accepts_kwarg(self._executor, "on_submit_done")
         self._owners = OwnerRegistry(self._store.db_path.parent / "plus_owners")
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._batch_projects: dict[tuple[str, str], str] = {}
 
     @property
     def scheduler(self) -> AccountPoolScheduler:
@@ -571,19 +574,26 @@ class PoolJobManager:
 
             profile, egress = acquired
             if self._is_cancelled(job_id):
-                self._scheduler.release_lane(profile, egress)
+                self._scheduler.release_lane(profile, egress, kind=job.kind)
                 return
 
             tried.add(profile)
             outcome = await self._execute_on_lane(job, profile, egress)
-            decision = self._scheduler.record_attempt(profile, outcome)
+            decision = self._scheduler.record_attempt(profile, outcome, kind=job.kind)
             if outcome.status == "succeeded":
+                if self._settings.sticky_project and job.batch_id and outcome.project_id:
+                    self._batch_projects[(job.batch_id, profile)] = outcome.project_id
                 job.status = "succeeded"
                 job.assigned_profile = profile
                 job.result = outcome.ledger_dict()
                 job.error = None
                 self._store.save_job(job)
                 return
+
+            if job.batch_id:
+                err_text = (outcome.error_detail or outcome.error_type or "").lower()
+                if any(tok in err_text for tok in ("project not found", "no project found", "404")):
+                    self._batch_projects.pop((job.batch_id, profile), None)
 
             if pinned or outcome.charged != "no" or not decision.retry_other_profile:
                 job.status = "indeterminate" if outcome.status == "indeterminate" else "failed"
@@ -627,7 +637,7 @@ class PoolJobManager:
                 pin_preferred=pin_preferred,
             )
             if picked is not None:
-                egress = self._scheduler.reserve_lane(picked)
+                egress = self._scheduler.reserve_lane(picked, kind=kind)
                 return picked, egress
             any_candidate = self._scheduler.pick_profile(
                 kind,
@@ -641,6 +651,52 @@ class PoolJobManager:
                 return None
             await asyncio.sleep(_LANE_POLL_S)
 
+    def _prepare_execution_payload(self, job: PoolJob, profile: str) -> dict[str, Any]:
+        """Adapt payload for ``profile``: strip cross-account refs on failover and
+        inject sticky ``project_id`` when none was explicitly requested."""
+        exec_payload = dict(job.payload)
+
+        # If a job bound in-project refs to its upstream profile but failed over to
+        # another account, fall back to the local file paths so the new account uploads cleanly.
+        if job.preferred_profile and profile != job.preferred_profile:
+            stripped_in_project = False
+            for slot in ("start_image", "end_image"):
+                ref_key = f"{slot}_ref"
+                local_key = f"{ref_key}_local_path"
+                if exec_payload.get(ref_key) and exec_payload.get(local_key):
+                    exec_payload[slot] = exec_payload[local_key]
+                    for suffix in ("", "_display_name", "_local_path", "_local_sha256"):
+                        exec_payload.pop(f"{ref_key}{suffix}", None)
+                    stripped_in_project = True
+            if job.kind == "image" and exec_payload.get("refs") and exec_payload.get("ref_meta"):
+                meta_map = cast("dict[str, dict[str, Any]]", exec_payload["ref_meta"])
+                raw_refs = cast("list[str]", exec_payload["refs"])
+                fallback_paths = [
+                    str(meta_map[mid]["local_path"])
+                    for mid in raw_refs
+                    if mid in meta_map and meta_map[mid].get("local_path")
+                ]
+                if len(fallback_paths) == len(raw_refs):
+                    exec_payload["ref_paths"] = fallback_paths
+                    exec_payload.pop("refs", None)
+                    exec_payload.pop("ref_meta", None)
+                    stripped_in_project = True
+            if stripped_in_project:
+                exec_payload.pop("project_id", None)
+
+        if (
+            self._settings.sticky_project
+            and job.kind in ("image", "video")
+            and not exec_payload.get("project_id")
+            and not exec_payload.get("project_name")
+        ):
+            sticky_pid = (
+                self._batch_projects.get((job.batch_id, profile)) if job.batch_id else None
+            ) or self._scheduler.get_sticky_project(profile)
+            if sticky_pid:
+                exec_payload["project_id"] = sticky_pid
+        return exec_payload
+
     async def _execute_on_lane(
         self,
         job: PoolJob,
@@ -649,49 +705,96 @@ class PoolJobManager:
     ) -> ExecutionOutcome:
         lock = self._scheduler.lane_lock(profile)
         proxy = self._scheduler.resolve_profile_proxy(profile)
-        try:
-            async with lock:
-                started_at = utc_now_iso()
-                try:
-                    job.status = "running"
-                    job.assigned_profile = profile
-                    self._store.save_job(job)
-                    await self._scheduler.wait_stagger()
-                    await self._scheduler.wait_egress_pacing(egress, profile)
-                    await self._scheduler.wait_lane_jitter(profile)
-                    started_at = utc_now_iso()
-                    if self._executor is execute_via_worker:
-                        outcome = await execute_via_worker(
-                            profile, job.task_type, job.payload, proxy=proxy
-                        )
-                    else:
-                        outcome = await self._executor(profile, job.task_type, job.payload)
-                except Exception as exc:  # noqa: BLE001 — capture unexpected lane errors safely
-                    log.warning("plus.pool.lane_exception", profile=profile, exc_info=exc)
-                    outcome = ExecutionOutcome(
-                        status="failed",
-                        profile=profile,
-                        error_type=type(exc).__name__,
-                        error_detail=str(exc),
-                        charged="no",
-                    )
-                finally:
-                    self._scheduler.note_egress_finished(egress, profile)
+        use_pipeline = (
+            job.kind == "video" and self._settings.max_inflight_videos_per_profile > 1
+        )
+        lock_held = False
+        submit_released = False
 
-                attempt = AttemptRecord(
-                    profile=profile,
-                    status=outcome.status,
-                    error_type=outcome.error_type,
-                    error_detail=outcome.error_detail,
-                    charged=outcome.charged,
-                    started_at=started_at,
-                    finished_at=utc_now_iso(),
-                )
-                job.attempts.append(attempt.to_dict())
+        def _release_submit_gate() -> None:
+            nonlocal lock_held, submit_released
+            if lock_held:
+                lock_held = False
+                lock.release()
+            if not submit_released:
+                submit_released = True
+                self._scheduler.release_submit_gate(profile, egress)
+
+        try:
+            await lock.acquire()
+            lock_held = True
+            started_at = utc_now_iso()
+            try:
+                job.status = "running"
+                job.assigned_profile = profile
                 self._store.save_job(job)
-                return outcome
+                await self._scheduler.wait_stagger()
+                await self._scheduler.wait_egress_pacing(egress, profile, kind=job.kind)
+                await self._scheduler.wait_lane_jitter(profile)
+                exec_payload = self._prepare_execution_payload(job, profile)
+                started_at = utc_now_iso()
+                submit_hook = _release_submit_gate if use_pipeline else None
+                if self._executor is execute_via_worker:
+                    outcome = await execute_via_worker(
+                        profile,
+                        job.task_type,
+                        exec_payload,
+                        proxy=proxy,
+                        on_submit_done=submit_hook,
+                    )
+                elif submit_hook is not None and self._executor_accepts_submit_hook:
+                    outcome = await cast("Any", self._executor)(
+                        profile,
+                        job.task_type,
+                        exec_payload,
+                        on_submit_done=submit_hook,
+                    )
+                else:
+                    outcome = await self._executor(profile, job.task_type, exec_payload)
+            except Exception as exc:  # noqa: BLE001 — capture unexpected lane errors safely
+                log.warning("plus.pool.lane_exception", profile=profile, exc_info=exc)
+                outcome = ExecutionOutcome(
+                    status="failed",
+                    profile=profile,
+                    error_type=type(exc).__name__,
+                    error_detail=str(exc),
+                    charged="no",
+                )
+            finally:
+                _release_submit_gate()
+                self._scheduler.note_egress_finished(egress, profile)
+
+            attempt = AttemptRecord(
+                profile=profile,
+                status=outcome.status,
+                error_type=outcome.error_type,
+                error_detail=outcome.error_detail,
+                charged=outcome.charged,
+                started_at=started_at,
+                finished_at=utc_now_iso(),
+            )
+            job.attempts.append(attempt.to_dict())
+            self._store.save_job(job)
+            return outcome
         finally:
-            self._scheduler.release_lane(profile, egress)
+            _release_submit_gate()
+            self._scheduler.release_lane(
+                profile,
+                egress,
+                kind=job.kind,
+                submit_already_released=True,
+            )
+
+
+def _accepts_kwarg(fn: Any, kwarg: str) -> bool:
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD or param.name == kwarg:
+            return True
+    return False
 
 
 def _count_statuses(jobs: Sequence[PoolJob]) -> dict[str, int]:

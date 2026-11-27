@@ -581,15 +581,17 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
         return None
     if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
         return f"the {request.mode.value} mode"
-    if request.end_image_ref_id:
+    if request.end_image_ref_id and not request.end_image_ref_display_name:
         return "an end frame given by Flow media UUID"
     if request.end_image_ref_name:
         return "an end frame given by @Name"
-    if request.start_image_ref_id:
+    if request.start_image_ref_id and not request.start_image_ref_display_name:
         return "a frame given by Flow media UUID"
     if request.start_image_ref_name:
         return "a frame given by @Name"
-    if not isinstance(request.start_image, Path):
+    if not isinstance(request.start_image, Path) and not (
+        request.start_image_ref_id and request.start_image_ref_display_name
+    ):
         return "image-to-video without a local start frame"
     return None
 
