@@ -76,7 +76,13 @@ _OutDir = Annotated[
 ]
 _Profile = Annotated[
     str | None,
-    Field(description="Run on this saved profile only; omit to let the pool pick an account."),
+    Field(
+        description=(
+            "Run on this saved profile only; omit by default so the pool stays on one "
+            "sticky primary account per IP and fails over automatically (manual round-robin "
+            "switching across accounts on a shared IP increases WAF risk)."
+        )
+    ),
 ]
 _Label = Annotated[str | None, Field(description="Your own name for the job, shown in status.")]
 _SkipIfExists = Annotated[

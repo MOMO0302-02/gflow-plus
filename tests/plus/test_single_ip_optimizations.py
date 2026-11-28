@@ -613,3 +613,142 @@ async def test_warm_browser_pool_refcounts_concurrent_leases_and_transport_relea
     assert submit_done_called is True
     assert lock_free_during_render is True
     assert tabs_closed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.sharpit(allow_n_plus_one=True)
+async def test_sticky_project_rotates_at_max_uses_and_quiet_time_decays_backoff(
+    tmp_path: Path,
+) -> None:
+    """Sticky projects rotate once sticky_project_max_uses is reached so projects never
+    overflow Flow's first-screen grid; stale AIMD backoff decays after quiet windows."""
+    now = [1000.0]
+    sleeps: list[float] = []
+    seen_projects: list[str | None] = []
+    proj_counter = 0
+
+    async def fake_exec(
+        profile: str, _task_type: str, payload: dict[str, Any]
+    ) -> ExecutionOutcome:
+        nonlocal proj_counter
+        pid = payload.get("project_id")
+        seen_projects.append(pid)
+        if not pid:
+            proj_counter += 1
+            pid = f"aaaaaaaa-aaaa-4aaa-8aaa-{proj_counter:012d}"
+        return ExecutionOutcome(status="succeeded", profile=profile, project_id=pid)
+
+    manager, scheduler = _build_single_ip_pool(
+        tmp_path,
+        fake_exec,
+        now_ref=now,
+        sleeps=sleeps,
+        settings_overrides={
+            "sticky_project": True,
+            "sticky_project_max_uses": 2,
+            "egress_waf_cooldown_s": 180.0,
+            "egress_min_interval_s": 15.0,
+            "image_egress_min_interval_s": 4.0,
+        },
+    )
+    await scheduler.refresh_credits(force=True)
+
+    # First 2 jobs share project #1; 3rd job rotates to a fresh project #2.
+    for i in range(3):
+        job = await manager.submit_job(
+            kind="image", task_type="t2i", payload={"prompt": f"frame {i}"}
+        )
+        await manager.wait_jobs(job_ids=[job.job_id], timeout_s=5.0)
+
+    assert seen_projects[0] is None
+    assert seen_projects[1] == "aaaaaaaa-aaaa-4aaa-8aaa-000000000001"
+    assert seen_projects[2] is None
+    report = scheduler.health_report()
+    assert report["sticky_project_max_uses"] == 2
+    assert "scheduling_hint" in report
+
+    # Simulate stale backoff from an earlier WAF, then advance 3 quiet cooldown windows.
+    scheduler.store.upsert_egress_state(
+        "direct",
+        last_used_at=now[0],
+        backoff_multiplier=3.24,
+        consecutive_successes=0,
+    )
+    now[0] += 600.0  # > 3 * 180s quiet
+    await scheduler.wait_egress_pacing("direct", "acc_c", kind="image")
+    eg = scheduler.store.get_egress_state("direct")
+    assert eg["backoff_multiplier"] == pytest.approx(1.0)
+
+
+def test_outcome_from_task_marks_free_image_and_explicit_waf_refusal_uncharged(
+    tmp_path: Path,
+) -> None:
+    """0-credit image failures and explicit wire WAF refusals without media_id must not
+    set charged='maybe' / may_have_spent=True."""
+    from gflow_cli.plus.pool.executor import _outcome_from_task  # noqa: PLC2701
+    from gflow_cli.worker.queue import QueueTask
+
+    img_task = QueueTask(
+        task_id="t1",
+        profile_name="acc_a",
+        task_type="i2i",
+        payload={"prompt": "test"},
+        status="failed",
+        error={
+            "type": "https://gflow-cli.dev/errors/waf-rejection",
+            "detail": "Flow refused the submit: PUBLIC_ERROR_UNUSUAL_ACTIVITY (gRPC 7)",
+            "charged": "maybe",
+            "exit_code": 10,
+        },
+        flow_media_id=None,
+    )
+    img_outcome = _outcome_from_task(img_task, profile="acc_a", db_path=tmp_path / "none.db")
+    assert img_outcome.charged == "no"
+
+    vid_task = QueueTask(
+        task_id="t2",
+        profile_name="acc_a",
+        task_type="i2v",
+        payload={"prompt": "test"},
+        status="failed",
+        error={
+            "type": "https://gflow-cli.dev/errors/waf-rejection",
+            "detail": "Flow refused the submit: PUBLIC_ERROR_UNUSUAL_ACTIVITY (gRPC 7)",
+            "charged": "maybe",
+            "exit_code": 10,
+        },
+        flow_media_id=None,
+    )
+    vid_outcome = _outcome_from_task(vid_task, profile="acc_a", db_path=tmp_path / "none.db")
+    assert vid_outcome.charged == "no"
+
+    # A timeout after submit (not an explicit refusal) must stay charged='maybe'
+    unknown_vid = QueueTask(
+        task_id="t3",
+        profile_name="acc_a",
+        task_type="i2v",
+        payload={"prompt": "test"},
+        status="failed",
+        error={
+            "type": "https://gflow-cli.dev/errors/transport-timeout",
+            "detail": "Submit was already clicked",
+            "charged": "maybe",
+            "exit_code": 9,
+        },
+        flow_media_id=None,
+    )
+    unknown_outcome = _outcome_from_task(
+        unknown_vid, profile="acc_a", db_path=tmp_path / "none.db"
+    )
+    assert unknown_outcome.charged == "maybe"
+
+
+def test_unique_display_name_caps_long_stems(tmp_path: Path) -> None:
+    """Long production filenames are capped to stay within Flow's @ picker debounce window."""
+    from gflow_cli.api.transports.migrated_composer import _unique_display_name
+
+    long_path = tmp_path / "ref_01_grey_3pc_stacked_1011741626174_extra_long_suffix.jpg"
+    name = _unique_display_name(long_path)
+    assert len(name) <= 37  # 24 stem + 1 hyphen + 8 hex + 4 ext
+    assert name.endswith(".jpg")
+    assert name.startswith("ref_01_grey_3pc_stacked-")

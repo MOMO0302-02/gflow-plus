@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS plus_account_state (
     disabled INTEGER NOT NULL DEFAULT 0,
     proxy TEXT,
     sticky_project_id TEXT,
-    sticky_project_updated_at REAL
+    sticky_project_updated_at REAL,
+    sticky_project_uses INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS plus_egress_state (
@@ -116,6 +117,11 @@ class PlusStateStore:
                 con.execute(
                     "ALTER TABLE plus_account_state ADD COLUMN sticky_project_updated_at REAL"
                 )
+            if "sticky_project_uses" not in acc_cols:
+                con.execute(
+                    "ALTER TABLE plus_account_state ADD COLUMN "
+                    "sticky_project_uses INTEGER NOT NULL DEFAULT 0"
+                )
             eg_cols = {r["name"] for r in con.execute("PRAGMA table_info(plus_egress_state)")}
             if "backoff_multiplier" not in eg_cols:
                 con.execute(
@@ -170,6 +176,7 @@ class PlusStateStore:
         clear_proxy: bool = False,
         sticky_project_id: str | None = None,
         sticky_project_updated_at: float | None = None,
+        sticky_project_uses: int | None = None,
         clear_sticky_project: bool = False,
     ) -> None:
         # One statement, so an update never reads a row another process is about to change:
@@ -178,14 +185,15 @@ class PlusStateStore:
         proxy_val = None if clear_proxy else proxy
         proj_val = None if clear_sticky_project else sticky_project_id
         proj_ts_val = None if clear_sticky_project else sticky_project_updated_at
+        proj_uses_val = 0 if clear_sticky_project else sticky_project_uses
         with self._connect() as con:
             con.execute(
                 """
                 INSERT INTO plus_account_state (
                     profile, credits, credits_checked_at, cooldown_until,
                     cooldown_reason, last_error, last_used_at, disabled, proxy,
-                    sticky_project_id, sticky_project_updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
+                    sticky_project_id, sticky_project_updated_at, sticky_project_uses
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, COALESCE(?, 0))
                 ON CONFLICT(profile) DO UPDATE SET
                     credits = COALESCE(excluded.credits, credits),
                     credits_checked_at = COALESCE(excluded.credits_checked_at, credits_checked_at),
@@ -203,7 +211,9 @@ class PlusStateStore:
                     sticky_project_updated_at = CASE WHEN ? THEN NULL
                         ELSE COALESCE(
                             excluded.sticky_project_updated_at, sticky_project_updated_at
-                        ) END
+                        ) END,
+                    sticky_project_uses = CASE WHEN ? THEN 0
+                        ELSE COALESCE(?, sticky_project_uses) END
                 """,
                 (
                     profile,
@@ -217,12 +227,15 @@ class PlusStateStore:
                     proxy_val,
                     proj_val,
                     proj_ts_val,
+                    proj_uses_val,
                     clear_cooldown,
                     clear_cooldown,
                     disabled_val,
                     clear_proxy,
                     clear_sticky_project,
                     clear_sticky_project,
+                    clear_sticky_project,
+                    proj_uses_val,
                 ),
             )
 
@@ -247,8 +260,9 @@ class PlusStateStore:
         with self._connect() as con:
             cur = con.execute(
                 "UPDATE plus_account_state "
-                "SET sticky_project_id = NULL, sticky_project_updated_at = NULL "
-                "WHERE sticky_project_id IS NOT NULL"
+                "SET sticky_project_id = NULL, sticky_project_updated_at = NULL, "
+                "sticky_project_uses = 0 "
+                "WHERE sticky_project_id IS NOT NULL OR sticky_project_uses != 0"
             )
             return cur.rowcount
 

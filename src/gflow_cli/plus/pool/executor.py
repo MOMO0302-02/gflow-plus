@@ -588,10 +588,24 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
 
     err = task.error or {}
     raw_charged = str(err.get("charged") or "no")
-    charged: ChargedState = (
-        "yes" if raw_charged == "yes" else "maybe" if raw_charged == "maybe" else "no"
-    )
+    err_type = str(err.get("type") or err.get("title") or "")
+    err_detail = str(err.get("detail") or err.get("title") or "generation failed")
     status = "indeterminate" if task.status == "indeterminate" else "failed"
+    # Images cost 0 credits, and explicit wire-level WAF submit refusals without a
+    # media_id were rejected by Flow before billing — do not block retry_job with a
+    # false may_have_spent flag. (Same-egress WAF cooldown still shields siblings.)
+    is_free_image = task.task_type in ("t2i", "i2i") and status == "failed"
+    is_explicit_waf_refusal = (
+        status == "failed"
+        and not task.flow_media_id
+        and "flow refused the submit: public_error_unusual_activity" in err_detail.lower()
+    )
+    if is_free_image or is_explicit_waf_refusal:
+        charged: ChargedState = "no"
+    else:
+        charged = (
+            "yes" if raw_charged == "yes" else "maybe" if raw_charged == "maybe" else "no"
+        )
     raw_exit = err.get("exit_code")
     return ExecutionOutcome(
         status=status,
@@ -601,8 +615,8 @@ def _outcome_from_task(task: QueueTask, *, profile: str, db_path: Path) -> Execu
         model=model,
         aspect=aspect,
         duration=duration,
-        error_type=str(err.get("type") or err.get("title") or status),
-        error_detail=str(err.get("detail") or err.get("title") or "generation failed"),
+        error_type=err_type or status,
+        error_detail=err_detail,
         charged=charged,
         exit_code=int(raw_exit) if isinstance(raw_exit, int) else None,
     )

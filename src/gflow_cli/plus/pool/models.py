@@ -33,6 +33,7 @@ class AccountHealth:
     egress_cooldown_until: float | None = None
     egress_cooldown_reason: str | None = None
     sticky_project_id: str | None = None
+    sticky_project_uses: int = 0
     inflight_videos: int = 0
 
     def to_dict(self, *, now: float) -> dict[str, Any]:
@@ -65,6 +66,7 @@ class AccountHealth:
             "egress_busy": self.egress_busy,
             "egress_cooldown_remaining_s": egress_remaining,
             "sticky_project_id": self.sticky_project_id,
+            "sticky_project_uses": self.sticky_project_uses,
             "cooldown_remaining_s": effective_remaining,
             "cooldown_reason": reason,
             "last_error": self.last_error,

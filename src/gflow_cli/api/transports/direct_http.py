@@ -6,7 +6,7 @@ import asyncio
 import secrets
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from pathlib import Path
@@ -499,6 +499,25 @@ class DirectHttpTransport(UiAutomationTransport):
                     await self._park_composer_page(page, event="direct.page_park_failed")
         log.info("direct.upload_fallback_to_ui", reason=reason)
         return await super().upload_reference(project_id=project_id, path=path)
+
+    async def upload_references(
+        self, *, project_id: str, paths: Sequence[Path]
+    ) -> list[ImageRef] | None:
+        """Batch-upload references: use direct HTTP when eligible, else single-visit UI upload."""
+        if not paths:
+            return []
+        if not self._setup_done or self._page is None:
+            msg = "DirectHttpTransport.setup() must be called before upload_references()"
+            raise RuntimeError(msg)
+        if self._why_not_direct_upload() is not None:
+            return await super().upload_references(project_id=project_id, paths=paths)
+        results: list[ImageRef] = []
+        for idx, path in enumerate(paths):
+            one = await self.upload_reference(project_id=project_id, path=path)
+            if one is None:
+                return None if idx == 0 else results
+            results.append(one)
+        return results
 
     def _why_not_direct_upload(self) -> str | None:
         if self._profile_dir is None:

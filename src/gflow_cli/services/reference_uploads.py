@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import structlog
 
-from gflow_cli.api.client import MAX_IMAGE_BYTES
+from gflow_cli.api.client import MAX_IMAGE_BYTES, validate_image_file
 from gflow_cli.api.dto import AssetInfo
 from gflow_cli.api.image import ImageRef, recorded_in_project
 from gflow_cli.errors import DataStoreError, ReferenceNotFoundError
@@ -59,15 +59,31 @@ async def generate_reusing_uploads(
     async def upload(path: Path) -> ImageRef | None:
         return await _upload(client, recorder, profile_name, profile_dir, project, path)
 
+    async def upload_many(missing_paths: Sequence[Path]) -> list[ImageRef | None]:
+        return await _upload_many(
+            client, recorder, profile_name, profile_dir, project, missing_paths
+        )
+
     reused: dict[str, Path] = {}
-    refs: list[ImageRef] = []
-    paths: list[Path] = []
-    for path in request.ref_paths:
+    cached_by_index: dict[int, ImageRef] = {}
+    missing_indices: list[int] = []
+    missing_paths: list[Path] = []
+    for idx, path in enumerate(request.ref_paths):
         ref = _recorded_upload(recorder, profile_name, path, project.project_id)
         if ref is not None:
             reused[ref.name] = path
+            cached_by_index[idx] = ref
         else:
-            ref = await upload(path)
+            missing_indices.append(idx)
+            missing_paths.append(path)
+
+    uploaded_list = await upload_many(missing_paths) if missing_paths else []
+    uploaded_by_index = dict(zip(missing_indices, uploaded_list, strict=True))
+
+    refs: list[ImageRef] = []
+    paths: list[Path] = []
+    for idx, path in enumerate(request.ref_paths):
+        ref = cached_by_index.get(idx) or uploaded_by_index.get(idx)
         if ref is None:
             paths.append(path)
         else:
@@ -81,11 +97,14 @@ async def generate_reusing_uploads(
         if not any(media_id in str(exc.detail) for media_id in reused):
             raise
     log.info("reference_uploads.recorded_image_gone", count=len(reused), issue_ref="#772")
-    fresh: list[ImageRef] = []
-    for ref in request.refs:
-        path = reused.get(ref.name)
-        new = await upload(path) if path is not None else None
-        fresh.append(new or ref)
+    stale_indices = [idx for idx, ref in enumerate(request.refs) if ref.name in reused]
+    stale_paths = [reused[request.refs[idx].name] for idx in stale_indices]
+    re_uploaded = await upload_many(stale_paths) if stale_paths else []
+    re_uploaded_by_index = dict(zip(stale_indices, re_uploaded, strict=True))
+    fresh: list[ImageRef] = [
+        re_uploaded_by_index.get(idx) or ref for idx, ref in enumerate(request.refs)
+    ]
+    del upload
     request = dataclasses.replace(request, refs=tuple(fresh))
     return await generate(request), request
 
@@ -123,22 +142,14 @@ def _recorded_upload(
     )
 
 
-async def _upload(
-    client: FlowApiClient,
+def _record_uploaded_ref(
     recorder: OperationRecorder,
     profile_name: str,
     profile_dir: Path,
     project: ProjectInfo,
+    ref: ImageRef,
     path: Path,
-) -> ImageRef | None:
-    try:
-        ref = await client.upload_reference_in_place(project.project_id, path)
-    except (ValueError, FileNotFoundError):
-        # A file the upload check refuses keeps the route it had before #772 (the
-        # editor dialog on labs, the composer upload on flow.google.com).
-        return None
-    if ref is None:
-        return None
+) -> None:
     asset = AssetInfo(
         name=ref.name,
         project_id=project.project_id,
@@ -158,4 +169,62 @@ async def _upload(
     except DataStoreError as exc:
         # The upload stands; only the reuse on a later run is lost.
         log.warning("reference_uploads.record_failed", media_id=ref.name, error=str(exc)[:120])
+
+
+async def _upload_many(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    paths: Sequence[Path],
+) -> list[ImageRef | None]:
+    if not paths:
+        return []
+    transport = getattr(client, "transport", None)
+    batch_fn = getattr(transport, "upload_references", None)
+    if len(paths) > 1 and callable(batch_fn):
+        valid_paths: list[Path] = []
+        valid_indices: list[int] = []
+        for idx, path in enumerate(paths):
+            try:
+                await validate_image_file(path)
+            except (ValueError, FileNotFoundError):
+                continue
+            valid_indices.append(idx)
+            valid_paths.append(path)
+        if len(valid_paths) > 1:
+            uploaded = cast(
+                "list[ImageRef] | None",
+                await cast("Any", batch_fn)(project_id=project.project_id, paths=valid_paths),
+            )
+            if uploaded is None:
+                return [None for _ in paths]
+            out: list[ImageRef | None] = [None for _ in paths]
+            for idx, path, ref in zip(valid_indices, valid_paths, uploaded, strict=True):
+                _record_uploaded_ref(recorder, profile_name, profile_dir, project, ref, path)
+                out[idx] = ref
+            return out
+    return [
+        await _upload(client, recorder, profile_name, profile_dir, project, path) for path in paths
+    ]
+
+
+async def _upload(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    path: Path,
+) -> ImageRef | None:
+    try:
+        ref = await client.upload_reference_in_place(project.project_id, path)
+    except (ValueError, FileNotFoundError):
+        # A file the upload check refuses keeps the route it had before #772 (the
+        # editor dialog on labs, the composer upload on flow.google.com).
+        return None
+    if ref is None:
+        return None
+    _record_uploaded_ref(recorder, profile_name, profile_dir, project, ref, path)
     return ref

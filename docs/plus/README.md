@@ -9,7 +9,7 @@ Plus 是本 fork 在官方 gflow-cli 之上加的多账号能力，代码全部�
 | 问题 | Plus 的做法 |
 |---|---|
 | MCP 调用超过 50 秒被客户端掐断 | 提交工具 1 秒内返回 `job_id` / `batch_id`，生成在后台跑；`gflow_plus_wait_jobs` 每次最多等 35 秒 |
-| 多个账号要手动分活 | 每个已登录账号一条车道：同账号排队，不同账号并发；视频优先给余额最高的空闲账号，图片按最久未用轮换 |
+| 多个账号要手动分活 | 默认全部账号共用同一本机 IP：每个出口组自动锁定 1 个主力粘性账号串行提交，不来回切号制造多号特征；主力号冷却或积分不足时无缝切到备用号。单账号独立代理属于可选项，绑定后按出口组自动解锁跨号并发 |
 | 同账号并发撞锁、窗口抢焦点 | 车道锁 + 浏览器启动错开 2.5 秒；同账号连续提交之间随机间隔（`GFLOW_CLI_JITTER_RANGE`，默认 0.5–1.5 秒） |
 | 任务栏不停闪自动化 Chrome 的图标 | Windows 上把屏幕外的 gflow Chrome 窗口从任务栏隐藏（页面照常渲染，不是无头模式） |
 | 返工时重复生成、重复扣费 | `out_file` 已存在且非空就跳过（Flow 把 `.png` 改存成 `.jpg` 时也认） |
@@ -82,7 +82,7 @@ gflow plus hide-taskbar [--json]
 | `GFLOW_PLUS_AUTH_ERROR_COOLDOWN_S` | `1800` | 登录失效后的冷却 |
 | `GFLOW_PLUS_TRANSIENT_COOLDOWN_S` | `30` | 提交前界面 / 网络问题后的冷却 |
 | `GFLOW_PLUS_WAF_COOLDOWN_S` | `600` | "检测到异常活动"后的单账号冷却 |
-| `GFLOW_PLUS_PROFILE_PROXIES` | 空 | 按账号绑定独立代理（逗号分隔 `profile=scheme://host:port`，不含密码）；也可用 `profile-control set_proxy` 运行时持久化绑定 |
+| `GFLOW_PLUS_PROFILE_PROXIES` | 空（默认单 IP 共用） | 可选：按账号绑定独立代理（逗号分隔 `profile=scheme://host:port`，不含密码）；也可用 `profile-control set_proxy` 运行时持久化绑定；不配时默认共用本机单 IP |
 | `GFLOW_PLUS_MAX_CONCURRENT_PER_EGRESS` | `1` | 同一出口 IP/代理组的最大跨号并发数（默认 `1` 防同 IP 连坐 WAF；不同代理组完全并发；`0` 不限） |
 | `GFLOW_PLUS_EGRESS_MIN_INTERVAL_S` | `15` | 同一出口组连续视频提交或跨账号切换的基础最小间隔秒数 |
 | `GFLOW_PLUS_IMAGE_EGRESS_MIN_INTERVAL_S` | `4` | 同一出口组连续图片提交的基础最小间隔秒数（0 积分图片更轻量） |
@@ -93,6 +93,7 @@ gflow plus hide-taskbar [--json]
 | `GFLOW_PLUS_STICKY_PROFILE_PER_EGRESS` | `1` | 单出口组内锁定主力粘性账号，不来回切号制造多号特征；仅当主力号冷却/余额不足时无缝切到备用号 |
 | `GFLOW_PLUS_STICKY_PROJECT` | `1` | 未显式指定 `project_id` 时，同批次/同账号自动复用同一个 Flow 项目（免重复建项目与重复上传参考图，`job:<label>` 同项目关键帧 0 二次上传） |
 | `GFLOW_PLUS_STICKY_PROJECT_TTL_S` | `3600` | 账号级粘性项目的自动复用有效期秒数（`0` 仅同批复用） |
+| `GFLOW_PLUS_STICKY_PROJECT_MAX_USES` | `20` | 单个自动粘性项目完成 N 次任务后自动轮换新项目（避免项目堆积上百资产超出 Flow 首屏 Grid 触发反复重载；`0` 关闭按次轮换） |
 | `GFLOW_PLUS_MAX_INFLIGHT_VIDEOS_PER_PROFILE` | `2` | 单账号通过独立标签页流水线并发渲染的最大在飞视频数（提交点击严格串行+出口节流，拿到提交回执后立即释放提交门禁，同 IP 绝不跨号并发；`1` 关闭流水线） |
 | `GFLOW_PLUS_MAX_FAILOVER_ATTEMPTS` | `3` | 一个任务最多换几个账号 |
 | `GFLOW_PLUS_DEFAULT_WAIT_TIMEOUT_S` | `25` | `wait_jobs` 默认等待秒数（上限 35） |

@@ -189,6 +189,15 @@ class PlusSettings(BaseSettings):
             "follow-up submits (0 reuses only within the same batch)."
         ),
     )
+    sticky_project_max_uses: int = Field(
+        default=20,
+        ge=0,
+        description=(
+            "Maximum completed jobs on one auto-created sticky Flow project before rotating "
+            "to a fresh project (keeps assets within Flow's first-screen DOM grid and "
+            "prevents 90s reload loops; 0 disables count-based rotation)."
+        ),
+    )
     max_inflight_videos_per_profile: int = Field(
         default=2,
         ge=1,

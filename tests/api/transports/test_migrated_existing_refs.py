@@ -444,3 +444,14 @@ async def test_no_grid_tile_means_the_look_is_not_spent() -> None:
     refs = (_ref("renamed in the Flow UI"),)
     assert await refreshed_from_picker(_composer(), page, refs) is None
     assert "@" not in page.typed
+
+
+@pytest.mark.usefixtures("_reload_budget")
+async def test_missing_old_ref_stops_after_max_reloads_instead_of_looping_90s() -> None:
+    """An asset pushed past Flow's first-screen grid must fail fast after 2 reloads rather
+    than burning the full 90s budget on 15+ full page reloads."""
+    page: Any = FakePage(grid={}, options=[])
+    request = _req(refs=(_ref("stale asset"),))
+    with pytest.raises(ReferenceNotFoundError):
+        await _composer().reference_existing(page, "proj", request)
+    assert page.reloads == 2

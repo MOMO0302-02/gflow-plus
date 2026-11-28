@@ -23,6 +23,7 @@ from gflow_cli.api.transports._mc_common import (
     ARROW_SETTLE_MS,
     ARROW_STEP_MS,
     COMPOSER,
+    EXISTING_REF_MAX_RELOADS,
     EXISTING_REF_RELOAD_PAUSE_S,
     EXISTING_REF_WAIT_S,
     FRAME_SEARCH_ATTEMPTS,
@@ -84,6 +85,7 @@ class MentionMixin(UploadFrameMixin):
         stale = {ref.name: ref.display_name for ref in refs}
         deadline = time.monotonic() + EXISTING_REF_WAIT_S
         look_up = True
+        reloads = 0
         while True:
             try:
                 tokens = await self.await_existing_references(page, refs)
@@ -95,9 +97,10 @@ class MentionMixin(UploadFrameMixin):
                 if look_up:  # one look, spent only when a tile could be matched
                     found = await refreshed_from_picker(self, page, refs)  # pyright: ignore[reportArgumentType]
                     look_up, refs = found is None, found or refs
-                if time.monotonic() >= deadline:
+                if reloads >= EXISTING_REF_MAX_RELOADS or time.monotonic() >= deadline:
                     raise
-            log.info("migrated.existing_reference_reload")
+            reloads += 1
+            log.info("migrated.existing_reference_reload", reload=reloads)
             await page.wait_for_timeout(EXISTING_REF_RELOAD_PAUSE_S * 1000)
             await page.reload(wait_until="domcontentloaded", timeout=45_000)
             if await self.ensure_editor(page, project_id) == "agent_only":
@@ -164,10 +167,12 @@ class MentionMixin(UploadFrameMixin):
         :meth:`reference_existing`, which reloads.
         """
         before = await self._caret_to_end(page)
-        await page.keyboard.type("@", delay=120)
+        await page.keyboard.type("@", delay=100)
+        await page.wait_for_timeout(1800)
+        # Fast real keystrokes keep the full query inside Flow's search debounce window
+        # instead of firing 8-10 server-side UpteDb batchexecute RPCs per reference.
+        await page.keyboard.type(query, delay=15)
         await page.wait_for_timeout(2200)
-        await page.keyboard.type(query, delay=100)
-        await page.wait_for_timeout(2500)
         tokens = [str(t) for t in await page.evaluate(_OPTION_TOKENS_JS, PICKER_OPTION)]
         if token in tokens:
             # The option's position: >0 means another image shares the caption (#21).
@@ -328,10 +333,10 @@ class MentionMixin(UploadFrameMixin):
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
             before = await self._caret_to_end(page)
             # Real keystrokes: see `_mention_by_name`.
-            await page.keyboard.type("@", delay=120)
+            await page.keyboard.type("@", delay=100)
+            await page.wait_for_timeout(1800)
+            await page.keyboard.type(name, delay=20)
             await page.wait_for_timeout(2200)
-            await page.keyboard.type(name, delay=100)
-            await page.wait_for_timeout(2500)
             titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
             if titles or attempt == FRAME_SEARCH_ATTEMPTS:
                 break
@@ -464,10 +469,10 @@ class MentionMixin(UploadFrameMixin):
             # and every later gesture is a no-op. `send_prompt` keeps insert_text on
             # purpose — a newline in prompt text must not submit — so they cannot share a
             # path.
-            await page.keyboard.type("@", delay=120)
+            await page.keyboard.type("@", delay=100)
+            await page.wait_for_timeout(1800)
+            await page.keyboard.type(name, delay=15)
             await page.wait_for_timeout(2200)
-            await page.keyboard.type(name, delay=100)
-            await page.wait_for_timeout(2500)
             offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
             if offered:
                 await page.keyboard.press("Enter")

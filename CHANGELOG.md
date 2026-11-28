@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sticky project rotation cap (`GFLOW_PLUS_STICKY_PROJECT_MAX_USES=20`) & bounded `reference_existing` reloads (`EXISTING_REF_MAX_RELOADS=2`)**: prevents long-lived sticky projects from accumulating 100+ assets past Flow's first-screen DOM grid (~43 tiles), eliminating the 90–120s reload storm before fallback re-upload that caused 200–255s `i2i` runs and elevated WAF triggers.
+- **Single-visit batch reference uploads (`upload_references`)**: uploads multiple new local `ref_paths` in one Flow editor visit instead of repeating `goto(project)` + `about:blank` per file, cutting navigation overhead and redundant project-load RPCs.
+- **Eliminate `@` picker `batchexecute` bursts**: caps `_unique_display_name` stem length at 24 characters and tightens mention query typing delay (`100ms` -> `15ms`) so each reference stays inside Flow's search debounce window (reducing pre-submit `UpteDb` RPCs from 20–31 to 2–4 per `i2i` job).
+- **Accurate `charged="no"` for 0-credit images and explicit WAF submit refusals**: prevents failed 0-credit image jobs and explicit `PUBLIC_ERROR_UNUSUAL_ACTIVITY` wire refusals (without a `media_id`) from setting false `may_have_spent=true` blocks on `gflow_plus_retry_job`, while keeping same-egress WAF shielding intact.
+- **Quiet-time AIMD backoff decay & single-IP scheduling hint**: automatically decays stale egress `backoff_multiplier` back toward `1.0` after idle cooldown windows and guides callers to omit `profile` on shared single-IP pools instead of manual round-robin switching.
+
 ## [1.4.0] - 2026-11-27
 
 ### gflow-plus

@@ -365,13 +365,36 @@ class AccountPoolScheduler:
             last_submit = self._egress_last_submit.get(egress_key, 0.0)
             last_finish = self._egress_last_finish.get(egress_key, 0.0)
             last_profile = self._egress_last_profile.get(egress_key)
+            stored_ts = egress_st.get("last_used_at")
             if last_profile is None:
-                stored_ts = egress_st.get("last_used_at")
                 if isinstance(stored_ts, (int, float)) and float(stored_ts) > last_finish:
                     last_finish = float(stored_ts)
                 stored_prof = egress_st.get("last_profile")
                 if isinstance(stored_prof, str) and stored_prof:
                     last_profile = stored_prof
+
+            # Natural time decay: if the egress group has been quiet for at least one
+            # full WAF cooldown window, decay AIMD backoff smoothly back toward 1.0 so
+            # stale penalties from hours earlier do not slow down fresh sessions.
+            last_activity = max(
+                last_submit,
+                last_finish,
+                float(stored_ts) if isinstance(stored_ts, (int, float)) else 0.0,
+            )
+            decay_unit_s = max(self._settings.egress_waf_cooldown_s, 180.0)
+            if backoff > 1.0 and last_activity > 0.0 and (now - last_activity) >= decay_unit_s:
+                quiet_windows = int((now - last_activity) // decay_unit_s)
+                if quiet_windows >= 3:
+                    decayed = 1.0
+                else:
+                    decayed = max(1.0, round(1.0 + (backoff - 1.0) * (0.5**quiet_windows), 2))
+                if decayed < backoff:
+                    backoff = decayed
+                    self._store.upsert_egress_state(
+                        egress_key,
+                        backoff_multiplier=backoff,
+                        consecutive_successes=0,
+                    )
 
             jitter_ratio = self._settings.egress_jitter_ratio
             jitter_factor = 1.0 + (
@@ -421,13 +444,19 @@ class AccountPoolScheduler:
             return wait_s
 
     def get_sticky_project(self, profile: str) -> str | None:
-        """Return the active non-expired sticky Flow project ID for ``profile``, if any."""
+        """Return the active non-expired, non-saturated sticky Flow project ID for ``profile``."""
         if not self._settings.sticky_project or self._settings.sticky_project_ttl_s <= 0:
             return None
         st = self._store.get_account_state(profile)
         pid = st.get("sticky_project_id")
         updated = st.get("sticky_project_updated_at")
+        uses = int(st.get("sticky_project_uses") or 0)
         if not isinstance(pid, str) or not pid.strip():
+            return None
+        if (
+            self._settings.sticky_project_max_uses > 0
+            and uses >= self._settings.sticky_project_max_uses
+        ):
             return None
         if isinstance(updated, (int, float)):
             if (self._clock() - float(updated)) > self._settings.sticky_project_ttl_s:
@@ -442,6 +471,7 @@ class AccountPoolScheduler:
             profile,
             sticky_project_id=project_id.strip(),
             sticky_project_updated_at=self._clock(),
+            sticky_project_uses=0,
         )
 
     def clear_sticky_project(self, profile: str | None = None) -> int:
@@ -507,11 +537,17 @@ class AccountPoolScheduler:
             eg_in_cooldown = isinstance(eg_cd_until, (int, float)) and float(eg_cd_until) > now
             raw_proj = st.get("sticky_project_id")
             raw_proj_ts = st.get("sticky_project_updated_at")
+            raw_proj_uses = int(st.get("sticky_project_uses") or 0)
             sticky_proj: str | None = None
+            under_cap = (
+                self._settings.sticky_project_max_uses <= 0
+                or raw_proj_uses < self._settings.sticky_project_max_uses
+            )
             if (
                 self._settings.sticky_project
                 and isinstance(raw_proj, str)
                 and raw_proj.strip()
+                and under_cap
                 and (
                     self._settings.sticky_project_ttl_s <= 0
                     or not isinstance(raw_proj_ts, (int, float))
@@ -547,6 +583,7 @@ class AccountPoolScheduler:
                     ),
                     egress_cooldown_reason=eg_st.get("cooldown_reason"),
                     sticky_project_id=sticky_proj,
+                    sticky_project_uses=raw_proj_uses if sticky_proj else 0,
                     inflight_videos=self.inflight_videos(meta.name),
                 )
             )
@@ -669,6 +706,11 @@ class AccountPoolScheduler:
                     "cooldown_reason": acc.egress_cooldown_reason if rem > 0 else None,
                 }
             egress_profiles[acc.egress_group].append(acc.profile)
+        shared_single_ip = (
+            len(egress_summary) == 1
+            and len(accounts) > 1
+            and self._settings.sticky_profile_per_egress
+        )
         return {
             "status": "ok" if healthy_accounts else "degraded",
             "total_profiles": len(accounts),
@@ -683,6 +725,18 @@ class AccountPoolScheduler:
             "max_inflight_videos_per_profile": self._settings.max_inflight_videos_per_profile,
             "sticky_profile_per_egress": self._settings.sticky_profile_per_egress,
             "sticky_project": self._settings.sticky_project,
+            "sticky_project_max_uses": self._settings.sticky_project_max_uses,
+            **(
+                {
+                    "scheduling_hint": (
+                        "All profiles share one IP: omit `profile` on submit so the pool "
+                        "stays on one sticky primary account and fails over automatically "
+                        "(avoid manual round-robin switching across accounts on the same IP)."
+                    )
+                }
+                if shared_single_ip
+                else {}
+            ),
             "profiles": [a.to_dict(now=now) for a in accounts],
         }
 
@@ -865,10 +919,10 @@ class AccountPoolScheduler:
 
             # Local credit deduction for paid video/extend completions so we don't
             # hammer Flow with extra balance checks on every clip.
+            acc_st = self._store.get_account_state(profile)
             updated_credits: int | None = None
             updated_checked_at: float | None = None
             if kind in ("video", "extend") and not outcome.skipped_existing:
-                acc_st = self._store.get_account_state(profile)
                 cached_credits = acc_st.get("credits")
                 if isinstance(cached_credits, int):
                     spent = (
@@ -884,6 +938,14 @@ class AccountPoolScheduler:
                 if (self._settings.sticky_project and outcome.project_id)
                 else None
             )
+            sticky_uses: int | None = None
+            if sticky_pid:
+                prev_pid = acc_st.get("sticky_project_id")
+                prev_uses = int(acc_st.get("sticky_project_uses") or 0)
+                if outcome.skipped_existing:
+                    sticky_uses = prev_uses if prev_pid == sticky_pid else 0
+                else:
+                    sticky_uses = (prev_uses + 1) if prev_pid == sticky_pid else 1
             self._store.upsert_account_state(
                 profile,
                 credits=updated_credits,
@@ -893,6 +955,7 @@ class AccountPoolScheduler:
                 clear_cooldown=True,
                 sticky_project_id=sticky_pid,
                 sticky_project_updated_at=now if sticky_pid else None,
+                sticky_project_uses=sticky_uses,
             )
             self._store.upsert_egress_state(
                 egress,
@@ -910,7 +973,14 @@ class AccountPoolScheduler:
         cd_until = now + decision.cooldown_s if decision.cooldown_s > 0 else None
         err_text = (outcome.error_detail or outcome.error_type or outcome.status or "").lower()
         clear_stale_proj = any(
-            tok in err_text for tok in ("project not found", "no project found", "404")
+            tok in err_text
+            for tok in (
+                "project not found",
+                "no project found",
+                "404",
+                "is not in this project's grid",
+                "did not attach as a reference",
+            )
         )
         self._store.upsert_account_state(
             profile,

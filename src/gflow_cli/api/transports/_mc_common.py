@@ -278,6 +278,10 @@ _CARET_TO_END_JS = (
 #: Budget for a just-generated image to become mentionable, across editor reloads
 #: (#913). Checked after each attempt, so a row can overrun it by one attempt.
 EXISTING_REF_WAIT_S = 90.0
+#: Cap reloads in ``reference_existing``: a freshly generated image appears within
+#: 1-2 reloads; an older asset pushed past Flow's first-screen grid window or deleted
+#: will never appear on reload #3..#15, and repeating full reloads triggers WAF.
+EXISTING_REF_MAX_RELOADS = 2
 #: Pause before each editor reload while waiting for it.
 EXISTING_REF_RELOAD_PAUSE_S = 5.0
 #: ArrowDown loads the highlighted asset's detail (`UpteDb`); an Enter sent before it
@@ -739,9 +743,11 @@ def _unique_display_name(image_path: Path) -> str:
     the submit-body check fired with ``eb1hJf does not carry the uploaded start frame``).
 
     The tag makes the match exact by construction, for both callers, trusting no ordering.
-    The stem is kept so the asset stays recognisable in the user's library.
+    The stem is capped at 24 characters so long production filenames stay readable while
+    keeping ``@`` picker typing fast and within Flow's search debounce window.
     """
-    return f"{image_path.stem}-{uuid4().hex[:8]}{image_path.suffix}"
+    stem = image_path.stem[:24].rstrip(" _-") or image_path.stem[:24]
+    return f"{stem}-{uuid4().hex[:8]}{image_path.suffix}"
 
 
 def _picker_pane(page: Any) -> Any:

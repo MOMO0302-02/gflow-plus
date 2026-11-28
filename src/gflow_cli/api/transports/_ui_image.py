@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -182,6 +182,63 @@ class ImageGenerationMixin(CharacterGenerationMixin):
             await self._park_composer_page(page, event="migrated.upload_page_park_failed")
             log.info("migrated.reference_uploaded", media_id=media_id)
             return ImageRef(name=media_id, display_name=display_name, in_project=True)
+
+    async def upload_references(
+        self, *, project_id: str, paths: Sequence[Path]
+    ) -> list[ImageRef] | None:
+        """Upload multiple local references into ``project_id`` in ONE editor visit.
+
+        Avoids N repeated ``goto(project)`` -> upload -> ``about:blank`` round-trips when
+        an i2i request carries 2-4 new reference images, cutting navigation latency and
+        project-load RPC churn before generation.
+        """
+        if not paths:
+            return []
+        if len(paths) == 1:
+            one = await self.upload_reference(project_id=project_id, path=paths[0])
+            return None if one is None else [one]
+        if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before upload_references()"
+            raise RuntimeError(msg)
+        from gflow_cli.api.transports.migrated_composer import MigratedComposer  # noqa: PLC0415
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        async with self._generate_lock:
+            page: Page = self._page
+            await self.park_deferred_page()
+            route = migrated_route(page.url, get_settings().flow_host, prefer_migrated=True)
+            if route == "labs":
+                return None
+            if route == "blocked":
+                raise_if_migrated(page, at="reference_upload_kill_switch")
+            composer = MigratedComposer()
+            uploaded: list[ImageRef] = []
+            try:
+                with nothing_submitted():  # #1320: uploads never bill credits
+                    if (
+                        await composer.ensure_editor_for(page, project_id, needs_classic=True)
+                        == "agent_only"
+                    ):
+                        from gflow_cli.api.transports import (  # noqa: PLC0415
+                            agent_only_composer as agent,
+                        )
+
+                        raise agent.refuse_unported("image-to-image")
+                    for path in paths:
+                        media_id, display_name = await composer.upload(page, project_id, path)
+                        uploaded.append(
+                            ImageRef(name=media_id, display_name=display_name, in_project=True)
+                        )
+            except Exception:
+                self._deferred_park_pending = True
+                raise
+            await self._park_composer_page(page, event="migrated.upload_page_park_failed")
+            log.info(
+                "migrated.references_uploaded_batch",
+                count=len(uploaded),
+                media_ids=[r.name for r in uploaded],
+            )
+            return uploaded
 
     def uses_page_owned_image_recaptcha(self) -> bool:
         """This transport drives Flow's own page, which mints its own reCAPTCHA token on

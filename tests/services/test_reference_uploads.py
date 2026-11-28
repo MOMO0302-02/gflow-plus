@@ -180,3 +180,56 @@ async def test_a_file_the_upload_check_refuses_keeps_its_old_route(tmp_path: Pat
     req = await _run(_Refusing(), text)
 
     assert req.ref_paths == (text,) and req.refs == ()
+
+
+async def test_batch_upload_uses_transport_upload_references_once(tmp_path: Path) -> None:
+    """Multiple missing local refs use transport.upload_references in a single call."""
+    batch_calls: list[tuple[str, list[Path]]] = []
+
+    class _BatchTransport:
+        async def upload_references(
+            self, *, project_id: str, paths: list[Path]
+        ) -> list[ImageRef]:
+            batch_calls.append((project_id, list(paths)))
+            return [
+                ImageRef(
+                    name=f"00000000-0000-4000-8000-{i + 1:012d}",
+                    display_name=p.name,
+                    in_project=True,
+                )
+                for i, p in enumerate(paths)
+            ]
+
+    class _BatchClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.transport = _BatchTransport()
+
+    a = tmp_path / "a.png"
+    b = tmp_path / "b.png"
+    a.write_bytes(_PNG)
+    b.write_bytes(_PNG)
+
+    client = _BatchClient()
+    recorder = OperationRecorder.open(get_settings())
+    try:
+        async def _generate(_req: GenerateImageRequest) -> str:
+            return "ok"
+
+        result, req = await generate_reusing_uploads(
+            client,  # type: ignore[arg-type]
+            GenerateImageRequest(prompt="a cup", ref_paths=(a, b)),
+            recorder=recorder,
+            profile_name="p1",
+            profile_dir=Path("profile_p1"),
+            project=_PROJECT,
+            generate=_generate,
+        )
+    finally:
+        recorder.close()
+    assert result == "ok"
+    assert len(batch_calls) == 1
+    assert batch_calls[0][1] == [a, b]
+    assert len(req.refs) == 2
+    assert req.ref_paths == ()
+    assert client.uploads == []
