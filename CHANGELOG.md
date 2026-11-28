@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-28
+
 ### Fixed
 
 - **Sticky project rotation cap (`GFLOW_PLUS_STICKY_PROJECT_MAX_USES=20`) & bounded `reference_existing` reloads (`EXISTING_REF_MAX_RELOADS=2`)**: prevents long-lived sticky projects from accumulating 100+ assets past Flow's first-screen DOM grid (~43 tiles), eliminating the 90–120s reload storm before fallback re-upload that caused 200–255s `i2i` runs and elevated WAF triggers.
